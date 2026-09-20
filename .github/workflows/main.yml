@@ -25,18 +25,17 @@ jobs:
 
       - name: Create Project & Inject Code
         run: |
-          # ساخت ساختار کامل اندروید
           flutter create --org com.ilia.goldbot --project-name goldbot my_app
           cd my_app
           flutter pub add http
 
-          # فعال کردن دسترسی به اینترنت در اندروید
+          # مجوز اینترنت
           sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"\/>' android/app/src/main/AndroidManifest.xml
 
-          # انتقال کد برنامه به پروژه
+          # جایگزینی کد برنامه
           cp ../lib/main.dart lib/main.dart
 
-          # ساخت فایل نصبی APK
+          # بیلد نهایی فایل APK
           flutter build apk --release
 
       - name: Upload APK
