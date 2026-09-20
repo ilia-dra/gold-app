@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:url_launcher/url_launcher.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -52,7 +51,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     _tabController = TabController(length: 3, vsync: this);
     fetchData();
 
-    // همگام‌سازی ۱۰ ثانیه‌ای لایو بدون لودینگ
+    // به‌روزرسانی لایو هر ۱۰ ثانیه بدون پرش صفحه
     _liveAutoRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       fetchData(isSilent: true);
     });
@@ -86,7 +85,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
           });
         }
       } else {
-        throw Exception("خطا در پاسخ");
+        throw Exception("خطا در پاسخ سرور");
       }
     } catch (e) {
       if (!isSilent && mounted) {
@@ -95,15 +94,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
           isLoading = false;
         });
       }
-    }
-  }
-
-  Future<void> _openExternalLink(String url) async {
-    final uri = Uri.parse(url);
-    try {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } catch (_) {
-      await launchUrl(uri, mode: LaunchMode.platformDefault);
     }
   }
 
@@ -248,23 +238,27 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   ],
                 ),
                 const SizedBox(height: 20),
-                SizedBox(
+
+                Container(
                   width: double.infinity,
-                  height: 50,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: isTradingView ? const Color(0xFF2962FF) : const Color(0xFFFF9800),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    icon: Icon(isTradingView ? Icons.candlestick_chart_rounded : Icons.insights_rounded, color: Colors.white),
-                    label: Text(
-                      isTradingView ? 'مشاهده چارت زنده در TradingView' : 'مشاهده چارت تکنیکال و زنده در TGJU',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                    ),
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _openExternalLink(chartUrl);
-                    },
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: isTradingView ? const Color(0xFF2962FF).withOpacity(0.12) : const Color(0xFFFF9800).withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: isTradingView ? const Color(0xFF2962FF).withOpacity(0.3) : const Color(0xFFFF9800).withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(isTradingView ? Icons.candlestick_chart_rounded : Icons.insights_rounded, 
+                           color: isTradingView ? const Color(0xFF2962FF) : const Color(0xFFFF9800)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          isTradingView ? 'مرجع جهانی: TradingView ($chartUrl)' : 'مرجع رسمی داخلی: TGJU ($chartUrl)',
+                          style: const TextStyle(color: Colors.white70, fontSize: 11),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -350,7 +344,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         _buildAssetGrid(assets),
                         const SizedBox(height: 24),
 
-                        // هدر و تب‌های دسته‌بندی ۳ روزه اخبار
+                        // هدر بخش اخبار با تب‌های سه‌روزه
                         const Row(
                           children: [
                             Icon(Icons.auto_awesome_rounded, color: Color(0xFFFFD700), size: 20),
@@ -382,16 +376,16 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         ),
                         const SizedBox(height: 14),
 
-                        // نمایش محتوای ۳ تب با ارتفاع متناسب
+                        // نمایش محتوای تب فعال
                         AnimatedBuilder(
                           animation: _tabController,
                           builder: (context, _) {
                             if (_tabController.index == 0) {
-                              return _buildNewsList(todayList, "هنوز خبری برای امروز ثبت نشده است.");
+                              return _buildNewsList(todayList, "هنوز تحلیلی برای امروز ثبت نشده است.");
                             } else if (_tabController.index == 1) {
-                              return _buildNewsList(yesterdayList, "تحلیلی برای روز قبل در آرشیو نیست.");
+                              return _buildNewsList(yesterdayList, "تحلیلی برای روز قبل در آرشیو موجود نیست.");
                             } else {
-                              return _buildNewsList(twoDaysAgoList, "تحلیلی برای ۲ روز قبل در آرشیو نیست.");
+                              return _buildNewsList(twoDaysAgoList, "تحلیلی برای ۲ روز قبل در آرشیو موجود نیست.");
                             }
                           },
                         ),
@@ -408,7 +402,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     }
     return GridView.builder(
       shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics),
+      physics: const NeverScrollableScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         crossAxisSpacing: 10,
@@ -476,7 +470,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         Text(item['unit']?.toString() ?? '', style: const TextStyle(fontSize: 9, color: Colors.grey)),
                       ],
                     ),
-                    // درصد تغییرات با رنگ‌بندی دقیق
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
@@ -506,7 +499,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     if (list.isEmpty) {
       return Container(
         padding: const EdgeInsets.symmetric(vertical: 30),
-        alignment: Center,
+        alignment: Alignment.center,
         child: Text(emptyMessage, style: const TextStyle(color: Colors.grey, fontSize: 13)),
       );
     }
@@ -581,7 +574,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             const SizedBox(height: 12),
             const Text('📝 تحلیل اثر اقتصادی:', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
-            Text(n['economic_analysis']?.toString() ?? '---', style: const TextStyle(fontSize: 13, height: 1.7, color: Colors.white)),
+            Text(n['economic_analysis'] ?? '---', style: const TextStyle(fontSize: 13, height: 1.7, color: Colors.white)),
             const SizedBox(height: 12),
             const Text('🎯 تارگت و پیش‌بینی قیمت:', style: TextStyle(color: Color(0xFFFFD700), fontSize: 12, fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
@@ -593,7 +586,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: Colors.white10),
               ),
-              child: Text(n['target']?.toString() ?? '---', style: const TextStyle(fontSize: 13, height: 1.6, color: Colors.white)),
+              child: Text(n['target'] ?? '---', style: const TextStyle(fontSize: 13, height: 1.6, color: Colors.white)),
             ),
           ],
         ),
