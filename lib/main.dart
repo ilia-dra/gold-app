@@ -1,7 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -42,37 +43,65 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Map<String, dynamic> pricesData = {};
   Map<String, dynamic> latestReport = {};
   String errorMessage = "";
+  Timer? _liveAutoRefreshTimer;
 
   @override
   void initState() {
     super.initState();
     fetchData();
+
+    // به‌روزرسانی زنده (Live) هر ۱۰ ثانیه یک‌بار به صورت کاملاً بی‌صدا و نامحسوس
+    _liveAutoRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      fetchData(isSilent: true);
+    });
   }
 
-  Future<void> fetchData() async {
-    setState(() {
-      isLoading = true;
-      errorMessage = "";
-    });
+  @override
+  void dispose() {
+    _liveAutoRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> fetchData({bool isSilent = false}) async {
+    if (!isSilent) {
+      setState(() {
+        isLoading = true;
+        errorMessage = "";
+      });
+    }
 
     try {
-      final pRes = await http.get(Uri.parse('$baseUrl/api/prices')).timeout(const Duration(seconds: 15));
-      final rRes = await http.get(Uri.parse('$baseUrl/api/latest')).timeout(const Duration(seconds: 15));
+      final pRes = await http.get(Uri.parse('$baseUrl/api/prices')).timeout(const Duration(seconds: 10));
+      final rRes = await http.get(Uri.parse('$baseUrl/api/latest')).timeout(const Duration(seconds: 10));
 
       if (pRes.statusCode == 200 && rRes.statusCode == 200) {
-        setState(() {
-          pricesData = json.decode(utf8.decode(pRes.bodyBytes));
-          latestReport = json.decode(utf8.decode(rRes.bodyBytes));
-          isLoading = false;
-        });
+        if (mounted) {
+          setState(() {
+            pricesData = json.decode(utf8.decode(pRes.bodyBytes));
+            latestReport = json.decode(utf8.decode(rRes.bodyBytes));
+            isLoading = false;
+          });
+        }
       } else {
         throw Exception("خطا در پاسخ");
       }
     } catch (e) {
-      setState(() {
-        errorMessage = "خطا در اتصال به سرور. اینترنت گوشی را بررسی کنید.";
-        isLoading = false;
-      });
+      if (!isSilent && mounted) {
+        setState(() {
+          errorMessage = "خطا در برقراری ارتباط با سرور. لطفاً اینترنت را بررسی کنید.";
+          isLoading = false;
+        });
+      }
+    }
+  }
+
+  // باز کردن مطمئن لینک‌های TradingView و TGJU
+  Future<void> _openExternalLink(String url) async {
+    final uri = Uri.parse(url);
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      await launchUrl(uri, mode: LaunchMode.platformDefault);
     }
   }
 
@@ -115,21 +144,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  void _openCandleChart(String key, Map<String, dynamic> item) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (ctx) => ProfessionalTradingChart(
-          initialKey: key,
-          initialAsset: item,
-          baseUrl: baseUrl,
-        ),
-      ),
-    );
-  }
-
   void _showAssetSheet(String key, Map<String, dynamic> item) {
     final accentColor = _getAssetColor(key);
+    final linkType = item['link_type']?.toString() ?? 'tgju';
+    final chartUrl = item['chart_url']?.toString() ?? 'https://www.tgju.org/';
+    final isTradingView = linkType == 'tradingview';
 
     showModalBottomSheet(
       context: context,
@@ -218,22 +237,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
                 const SizedBox(height: 20),
+
+                // دکمه اتصال مستقیم به چارت زنده TradingView یا TGJU
                 SizedBox(
                   width: double.infinity,
-                  height: 48,
+                  height: 50,
                   child: ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2962FF),
+                      backgroundColor: isTradingView ? const Color(0xFF2962FF) : const Color(0xFFFF9800),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
-                    icon: const Icon(Icons.candlestick_chart_rounded, color: Colors.white),
-                    label: const Text(
-                      'ورود به میزکار تحلیلی و چارت کندلی',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    icon: Icon(isTradingView ? Icons.candlestick_chart_rounded : Icons.insights_rounded, color: Colors.white),
+                    label: Text(
+                      isTradingView ? 'مشاهده چارت زنده در TradingView' : 'مشاهده چارت تکنیکال و زنده در TGJU',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                     ),
                     onPressed: () {
                       Navigator.pop(ctx);
-                      _openCandleChart(key, item);
+                      _openExternalLink(chartUrl);
                     },
                   ),
                 ),
@@ -260,32 +281,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
         appBar: AppBar(
           backgroundColor: const Color(0xFF131922),
           elevation: 0,
-          title: const Row(
+          title: Row(
             children: [
-              Icon(Icons.shield_rounded, color: Color(0xFFFFD700)),
-              SizedBox(width: 8),
-              Text('Goldbotop Intel', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
+              const Icon(Icons.shield_rounded, color: Color(0xFFFFD700)),
+              const SizedBox(width: 8),
+              const Text('Goldbotop Intel', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
+              const SizedBox(width: 8),
+              // بج لایو بودن اتصال زنده
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF00E676).withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: const Color(0xFF00E676).withOpacity(0.4)),
+                ),
+                child: const Row(
+                  children: [
+                    Text('🟢 زنده', style: TextStyle(color: Color(0xFF00E676), fontSize: 10, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ),
             ],
           ),
           actions: [
             IconButton(
-              icon: const Icon(Icons.candlestick_chart_rounded, color: Color(0xFF2962FF)),
-              tooltip: 'چارت طلا',
-              onPressed: () {
-                final goldData = assets['ons_gold'] != null
-                    ? Map<String, dynamic>.from(assets['ons_gold'])
-                    : {"name": "انس جهانی طلا", "symbol": "XAU / USD", "unit": "دلار", "current_price": "4,383.50", "low": "4,370.00", "high": "4,395.00", "change": "۰.۰٪"};
-                _openCandleChart("ons_gold", goldData);
-              },
-            ),
-            IconButton(
               icon: const Icon(Icons.refresh, color: Color(0xFFFFD700)),
-              onPressed: fetchData,
+              tooltip: 'به‌روزرسانی دستی',
+              onPressed: () => fetchData(),
             ),
           ],
         ),
         body: RefreshIndicator(
-          onRefresh: fetchData,
+          onRefresh: () => fetchData(),
           color: const Color(0xFFFFD700),
           child: isLoading
               ? const Center(child: CircularProgressIndicator(color: Color(0xFFFFD700)))
@@ -298,7 +325,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           const SizedBox(height: 12),
                           ElevatedButton(
                             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFD700)),
-                            onPressed: fetchData,
+                            onPressed: () => fetchData(),
                             child: const Text('تلاش مجدد', style: TextStyle(color: Colors.black)),
                           )
                         ],
@@ -310,7 +337,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Text('📊 تابلوی زنده بازار', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                            const Text('📊 تابلوی نرخ‌های لحظه‌ای', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
                             Text(pricesData['updated_at']?.toString() ?? '', style: const TextStyle(fontSize: 11, color: Colors.grey)),
                           ],
                         ),
@@ -387,7 +414,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ),
                       ],
                     ),
-                    const Icon(Icons.touch_app_outlined, size: 14, color: Colors.grey),
+                    const Icon(Icons.open_in_new_rounded, size: 14, color: Colors.grey),
                   ],
                 ),
                 Text(item['name']?.toString() ?? '', style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w500)),
@@ -475,7 +502,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const SizedBox(height: 12),
             const Text('📝 تحلیل اثر اقتصادی:', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
-            Text(n['economic_analysis']?.toString() ?? '---', style: const TextStyle(fontSize: 13, height: 1.7, color: Colors.white)),
+            Text(n['economic_analysis'] ?? '---', style: const TextStyle(fontSize: 13, height: 1.7, color: Colors.white)),
             const SizedBox(height: 12),
             const Text('🎯 تارگت و پیش‌بینی قیمت:', style: TextStyle(color: Color(0xFFFFD700), fontSize: 12, fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
@@ -487,7 +514,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: Colors.white10),
               ),
-              child: Text(n['target']?.toString() ?? '---', style: const TextStyle(fontSize: 13, height: 1.6, color: Colors.white)),
+              child: Text(n['target'] ?? '---', style: const TextStyle(fontSize: 13, height: 1.6, color: Colors.white)),
             ),
           ],
         ),
@@ -504,547 +531,4 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ],
     );
   }
-}
-
-// مدل کندل‌استیک
-class CandleModel {
-  final String time;
-  final double open;
-  final double high;
-  final double low;
-  final double close;
-
-  CandleModel({required this.time, required this.open, required this.high, required this.low, required this.close});
-
-  bool get isBullish => close >= open;
-  double get changePct => open > 0 ? ((close - open) / open) * 100 : 0.0;
-}
-
-// میزکار تکنیکال تعاملی با زوم، حرکت طبیعی و کشش عمودی محور قیمت
-class ProfessionalTradingChart extends StatefulWidget {
-  final String initialKey;
-  final Map<String, dynamic> initialAsset;
-  final String baseUrl;
-
-  const ProfessionalTradingChart({super.key, required this.initialKey, required this.initialAsset, required this.baseUrl});
-
-  @override
-  State<ProfessionalTradingChart> createState() => _ProfessionalTradingChartState();
-}
-
-class _ProfessionalTradingChartState extends State<ProfessionalTradingChart> {
-  late String currentKey;
-  String selectedTf = "1D";
-  bool isLoading = true;
-  List<CandleModel> candles = [];
-
-  // متغیرهای فیزیک حرکت، زوم و مقیاس عمودی
-  double _scrollOffset = 0.0;
-  double _candleWidth = 14.0;
-  double _baseCandleWidth = 14.0;
-  double _priceScaleFactor = 1.0; // ضریب فشرده‌سازی/کشش عمودی
-  bool _isDraggingPriceScale = false;
-  Offset? _crosshairPoint;
-
-  final Map<String, String> symbolNames = {
-    "ons_gold": "انس طلا",
-    "geram18": "طلای ۱۸ عیار",
-    "mesghal": "مظنه آبشده",
-    "sekeh": "سکه امامی",
-    "dollar": "دلار آزاد",
-    "silver_gram": "نقره ۹۹۹",
-    "ons_silver": "انس نقره",
-  };
-
-  final List<String> timeframes = ["15M", "1H", "4H", "1D", "1W"];
-
-  @override
-  void initState() {
-    super.initState();
-    currentKey = widget.initialKey;
-
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
-
-    fetchCandles(currentKey, selectedTf);
-  }
-
-  Future<void> fetchCandles(String key, String tf) async {
-    setState(() {
-      isLoading = true;
-      _crosshairPoint = null;
-      _scrollOffset = 0.0;
-      _priceScaleFactor = 1.0; // ریست مقیاس عمودی هنگام تعویض نماد
-    });
-
-    try {
-      final res = await http.get(Uri.parse('${widget.baseUrl}/api/history/$key?tf=$tf')).timeout(const Duration(seconds: 10));
-      if (res.statusCode == 200) {
-        final List<dynamic> raw = json.decode(utf8.decode(res.bodyBytes));
-        final parsed = raw.map((c) => CandleModel(
-          time: c['time'].toString(),
-          open: (c['open'] as num).toDouble(),
-          high: (c['high'] as num).toDouble(),
-          low: (c['low'] as num).toDouble(),
-          close: (c['close'] as num).toDouble(),
-        )).toList();
-
-        if (parsed.isNotEmpty) {
-          setState(() {
-            candles = parsed;
-            isLoading = false;
-          });
-          return;
-        }
-      }
-    } catch (_) {}
-
-    setState(() => isLoading = false);
-  }
-
-  @override
-  void dispose() {
-    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    CandleModel? focusedCandle;
-
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        backgroundColor: const Color(0xFF131722),
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF1E222D),
-          elevation: 0,
-          title: Row(
-            children: [
-              Text(symbolNames[currentKey] ?? currentKey, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(color: const Color(0xFF2962FF).withOpacity(0.25), borderRadius: BorderRadius.circular(4)),
-                child: Text(selectedTf, style: const TextStyle(color: Color(0xFF2962FF), fontSize: 11, fontWeight: FontWeight.bold)),
-              ),
-            ],
-          ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.screen_rotation_rounded, color: Color(0xFFFFD700)),
-              tooltip: 'چرخش صفحه',
-              onPressed: () {
-                final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
-                SystemChrome.setPreferredOrientations([
-                  isLandscape ? DeviceOrientation.portraitUp : DeviceOrientation.landscapeLeft,
-                ]);
-              },
-            ),
-          ],
-        ),
-        body: Column(
-          children: [
-            // نوار انتخاب سریع نمادها
-            Container(
-              height: 42,
-              color: const Color(0xFF1E222D),
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                children: symbolNames.entries.map((e) {
-                  final isSel = currentKey == e.key;
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 3),
-                    child: ChoiceChip(
-                      label: Text(e.value, style: TextStyle(fontSize: 11, fontWeight: isSel ? FontWeight.bold : FontWeight.normal, color: isSel ? Colors.black : Colors.white70)),
-                      selected: isSel,
-                      selectedColor: const Color(0xFFFFD700),
-                      backgroundColor: const Color(0xFF131722),
-                      onSelected: (_) {
-                        setState(() => currentKey = e.key);
-                        fetchCandles(e.key, selectedTf);
-                      },
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-
-            // نوار انتخاب تایم‌فریم و راهنما
-            Container(
-              height: 38,
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              decoration: const BoxDecoration(
-                color: Color(0xFF131722),
-                border: Border(bottom: BorderSide(color: Color(0xFF2A2E39), width: 1)),
-              ),
-              child: Row(
-                children: [
-                  const Text('تایم‌فریم:', style: TextStyle(color: Colors.grey, fontSize: 11)),
-                  const SizedBox(width: 8),
-                  ...timeframes.map((tf) {
-                    final isSelected = selectedTf == tf;
-                    return InkWell(
-                      onTap: () {
-                        setState(() => selectedTf = tf);
-                        fetchCandles(currentKey, tf);
-                      },
-                      child: Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: isSelected ? const Color(0xFF2962FF) : Colors.transparent,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          tf,
-                          style: TextStyle(
-                            color: isSelected ? Colors.white : Colors.white70,
-                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                  const Spacer(),
-                  const Row(
-                    children: [
-                      Icon(Icons.swap_vert_rounded, size: 14, color: Color(0xFFFFD700)),
-                      SizedBox(width: 3),
-                      Text('محور قیمت: درگ عمودی', style: TextStyle(color: Colors.grey, fontSize: 10)),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
-            // بستر چارت تعاملی
-            Expanded(
-              child: isLoading
-                  ? const Center(child: CircularProgressIndicator(color: Color(0xFF2962FF)))
-                  : LayoutBuilder(
-                      builder: (ctx, constraints) {
-                        const padRight = 65.0;
-                        final chartWidth = constraints.maxWidth - padRight;
-                        final maxScroll = ((candles.length * _candleWidth) - chartWidth).clamp(0.0, double.infinity);
-                        _scrollOffset = _scrollOffset.clamp(0.0, maxScroll);
-
-                        // پیدا کردن کندل تحت نشانگر کراس‌هیر
-                        if (_crosshairPoint != null) {
-                          final touchX = _crosshairPoint!.dx;
-                          for (int i = 0; i < candles.length; i++) {
-                            final x = chartWidth - ((candles.length - 1 - i) * _candleWidth) + _scrollOffset - (_candleWidth / 2);
-                            if ((touchX - x).abs() <= _candleWidth / 2) {
-                              focusedCandle = candles[i];
-                              break;
-                            }
-                          }
-                        }
-                        focusedCandle ??= candles.isNotEmpty ? candles.last : null;
-
-                        return Stack(
-                          children: [
-                            GestureDetector(
-                              onDoubleTapDown: (details) {
-                                // دابل‌تپ روی نوار قیمت = ریست خودکار به اندازه اولیه
-                                if (details.localPosition.dx >= chartWidth) {
-                                  setState(() => _priceScaleFactor = 1.0);
-                                }
-                              },
-                              onScaleStart: (details) {
-                                if (details.localFocalPoint.dx >= chartWidth) {
-                                  _isDraggingPriceScale = true;
-                                } else {
-                                  _isDraggingPriceScale = false;
-                                  if (details.pointerCount > 1) {
-                                    _baseCandleWidth = _candleWidth;
-                                  }
-                                }
-                              },
-                              onScaleUpdate: (details) {
-                                if (_isDraggingPriceScale) {
-                                  // قابلیت TradingView: درگ عمودی روی نوار قیمت برای فشرده/باز کردن عمودی
-                                  setState(() {
-                                    _priceScaleFactor = (_priceScaleFactor - (details.focalPointDelta.dy * 0.008)).clamp(0.25, 4.5);
-                                  });
-                                } else {
-                                  if (details.pointerCount == 1) {
-                                    setState(() {
-                                      // حرکت کاملاً طبیعی و غیربرعکس: کشیدن به راست = گذشته / کشیدن به چپ = حال
-                                      _scrollOffset = (_scrollOffset + details.focalPointDelta.dx).clamp(0.0, maxScroll);
-                                    });
-                                  } else if (details.pointerCount >= 2) {
-                                    setState(() {
-                                      _candleWidth = (_baseCandleWidth * details.scale).clamp(4.0, 35.0);
-                                    });
-                                  }
-                                }
-                              },
-                              onLongPressStart: (details) => setState(() => _crosshairPoint = details.localPosition),
-                              onLongPressMoveUpdate: (details) => setState(() => _crosshairPoint = details.localPosition),
-                              onLongPressEnd: (_) => setState(() => _crosshairPoint = null),
-                              child: CustomPaint(
-                                size: Size(constraints.maxWidth, constraints.maxHeight),
-                                painter: InteractiveCandlePainter(
-                                  candles: candles,
-                                  candleWidth: _candleWidth,
-                                  scrollOffset: _scrollOffset,
-                                  priceScaleFactor: _priceScaleFactor,
-                                  crosshairPoint: _crosshairPoint,
-                                  isToman: widget.initialAsset['unit'] == 'تومان',
-                                ),
-                              ),
-                            ),
-
-                            // هدر هوشمند اطلاعات کندل (OHLC HUD)
-                            if (focusedCandle != null)
-                              Positioned(
-                                top: 8,
-                                left: 10,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF1E222D).withOpacity(0.92),
-                                    borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(color: Colors.white12),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Text(focusedCandle!.time, style: const TextStyle(color: Color(0xFFFFD700), fontSize: 11, fontWeight: FontWeight.bold)),
-                                      const SizedBox(width: 8),
-                                      _hudText('O:', focusedCandle!.open),
-                                      _hudText('H:', focusedCandle!.high),
-                                      _hudText('L:', focusedCandle!.low),
-                                      _hudText('C:', focusedCandle!.close, color: focusedCandle!.isBullish ? const Color(0xFF089981) : const Color(0xFFF23645)),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        '${focusedCandle!.changePct >= 0 ? "+" : ""}${focusedCandle!.changePct.toStringAsFixed(2)}%',
-                                        style: TextStyle(
-                                          color: focusedCandle!.isBullish ? const Color(0xFF089981) : const Color(0xFFF23645),
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-
-                            // دکمه ریست مقیاس عمودی قیمت در صورت تغییر
-                            if (_priceScaleFactor != 1.0)
-                              Positioned(
-                                top: 8,
-                                right: 75,
-                                child: InkWell(
-                                  onTap: () => setState(() => _priceScaleFactor = 1.0),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF2962FF),
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: const Text('Auto Fit', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                                  ),
-                                ),
-                              ),
-
-                            // دکمه بازگشت سریع به جدیدترین قیمت
-                            if (_scrollOffset > 50)
-                              Positioned(
-                                bottom: 35,
-                                left: 14,
-                                child: FloatingActionButton.small(
-                                  backgroundColor: const Color(0xFF2962FF),
-                                  child: const Icon(Icons.fast_forward_rounded, color: Colors.white),
-                                  onPressed: () {
-                                    setState(() {
-                                      _scrollOffset = 0.0;
-                                      _crosshairPoint = null;
-                                    });
-                                  },
-                                ),
-                              ),
-                          ],
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _hudText(String prefix, double val, {Color? color}) {
-    final s = val > 1000 ? val.toInt().toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},') : val.toStringAsFixed(2);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 3),
-      child: Text('$prefix $s', style: TextStyle(color: color ?? Colors.white70, fontSize: 10, fontFamily: 'monospace')),
-    );
-  }
-}
-
-// نقاش حرفه‌ای کندل‌استیک با مقیاس داینامیک و پشتیبانی از کشش محور Y
-class InteractiveCandlePainter extends CustomPainter {
-  final List<CandleModel> candles;
-  final double candleWidth;
-  final double scrollOffset;
-  final double priceScaleFactor;
-  final Offset? crosshairPoint;
-  final bool isToman;
-
-  InteractiveCandlePainter({
-    required this.candles,
-    required this.candleWidth,
-    required this.scrollOffset,
-    required this.priceScaleFactor,
-    this.crosshairPoint,
-    required this.isToman,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (candles.isEmpty) return;
-
-    const double padTop = 32.0;
-    const double padBottom = 26.0;
-    const double padRight = 65.0;
-    final double chartHeight = size.height - padTop - padBottom;
-    final double chartWidth = size.width - padRight;
-
-    // پیدا کردن کندل‌های داخل کادر جهت اندازه‌گیری سقف و کف بازه دید
-    List<CandleModel> visibleCandles = [];
-    for (int i = 0; i < candles.length; i++) {
-      final x = chartWidth - ((candles.length - 1 - i) * candleWidth) + scrollOffset - (candleWidth / 2);
-      if (x >= -candleWidth && x <= chartWidth + candleWidth) {
-        visibleCandles.add(candles[i]);
-      }
-    }
-    if (visibleCandles.isEmpty) visibleCandles = candles;
-
-    double minP = visibleCandles.map((c) => c.low).reduce((a, b) => a < b ? a : b);
-    double maxP = visibleCandles.map((c) => c.high).reduce((a, b) => a > b ? a : b);
-    double baseRange = (maxP - minP) == 0 ? 1.0 : (maxP - minP);
-
-    // اعمال فشرده‌سازی/کشش عمودی محور قیمت
-    final midP = (minP + maxP) / 2.0;
-    final adjustedHalfRange = (baseRange / 2.0) / priceScaleFactor;
-    final effMinP = midP - adjustedHalfRange;
-    final effMaxP = midP + adjustedHalfRange;
-    final effRange = effMaxP - effMinP;
-
-    // خطوط افقی و اعداد قیمت روی محور راست
-    final gridPaint = Paint()..color = const Color(0xFF1E222D)..strokeWidth = 1.0;
-    for (int i = 0; i <= 4; i++) {
-      final y = padTop + (chartHeight / 4) * i;
-      canvas.drawLine(Offset(0, y), Offset(chartWidth, y), gridPaint);
-
-      final p = effMaxP - (effRange / 4) * i;
-      final pStr = isToman ? (p > 1000 ? p.toInt().toString() : p.toStringAsFixed(0)) : p.toStringAsFixed(2);
-      final tp = TextPainter(
-        text: TextSpan(text: pStr, style: const TextStyle(color: Color(0xFF787B86), fontSize: 9, fontFamily: 'monospace')),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      tp.paint(canvas, Offset(chartWidth + 6, y - 5));
-    }
-
-    // قلم‌های کندل‌های صعودی و نزولی (رنگ‌های استاندارد تریدینگ‌ویو)
-    const bullColor = Color(0xFF089981);
-    const bearColor = Color(0xFFF23645);
-
-    final bullBodyPaint = Paint()..color = bullColor..style = PaintingStyle.fill;
-    final bearBodyPaint = Paint()..color = bearColor..style = PaintingStyle.fill;
-    final bullWickPaint = Paint()..color = bullColor..strokeWidth = 1.4;
-    final bearWickPaint = Paint()..color = bearColor..strokeWidth = 1.4;
-
-    // ترسیم کندل‌ها
-    for (int i = 0; i < candles.length; i++) {
-      final x = chartWidth - ((candles.length - 1 - i) * candleWidth) + scrollOffset - (candleWidth / 2);
-      if (x < -candleWidth || x > chartWidth + candleWidth) continue;
-
-      final c = candles[i];
-      final yHigh = padTop + chartHeight - ((c.high - effMinP) / effRange * chartHeight);
-      final yLow = padTop + chartHeight - ((c.low - effMinP) / effRange * chartHeight);
-      final yOpen = padTop + chartHeight - ((c.open - effMinP) / effRange * chartHeight);
-      final yClose = padTop + chartHeight - ((c.close - effMinP) / effRange * chartHeight);
-
-      final isBull = c.isBullish;
-      canvas.drawLine(Offset(x, yHigh), Offset(x, yLow), isBull ? bullWickPaint : bearWickPaint);
-
-      final top = isBull ? yClose : yOpen;
-      final bottom = isBull ? yOpen : yClose;
-      final bHeight = (bottom - top).abs() < 1.5 ? 1.5 : (bottom - top).abs();
-      final bWidth = (candleWidth * 0.72).clamp(2.5, 24.0);
-
-      canvas.drawRect(
-        Rect.fromCenter(center: Offset(x, top + bHeight / 2), width: bWidth, height: bHeight),
-        isBull ? bullBodyPaint : bearBodyPaint,
-      );
-
-      // نمایش تاریخ در محور زمان برای فواصل منظم
-      if (i % 8 == 0) {
-        final dateTp = TextPainter(
-          text: TextSpan(text: c.time.split(' ').last, style: const TextStyle(color: Color(0xFF787B86), fontSize: 8)),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        dateTp.paint(canvas, Offset(x - (dateTp.width / 2), size.height - padBottom + 6));
-      }
-    }
-
-    // خط افقی نقطه‌چین آخرین قیمت لحظه‌ای
-    final lastC = candles.last;
-    final lastY = padTop + chartHeight - ((lastC.close - effMinP) / effRange * chartHeight);
-    final lastPaint = Paint()..color = lastC.isBullish ? bullColor : bearColor..strokeWidth = 1.0;
-    
-    double dashX = 0;
-    while (dashX < chartWidth) {
-      canvas.drawLine(Offset(dashX, lastY), Offset(dashX + 4, lastY), lastPaint);
-      dashX += 8;
-    }
-
-    // بج آخرین قیمت روی محور عمودی
-    final lastStr = isToman ? (lastC.close > 1000 ? lastC.close.toInt().toString() : lastC.close.toStringAsFixed(0)) : lastC.close.toStringAsFixed(2);
-    final badgeTp = TextPainter(
-      text: TextSpan(text: lastStr, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
-      textDirection: TextDirection.ltr,
-    )..layout();
-
-    final badgeRect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(chartWidth + 2, lastY - 9, badgeTp.width + 8, 18),
-      const Radius.circular(4),
-    );
-    canvas.drawRRect(badgeRect, lastPaint);
-    badgeTp.paint(canvas, Offset(chartWidth + 6, lastY - 6));
-
-    // خطوط کراس‌هیر لمسی
-    if (crosshairPoint != null) {
-      final cx = crosshairPoint!.dx.clamp(0.0, chartWidth);
-      final cy = crosshairPoint!.dy.clamp(padTop, padTop + chartHeight);
-
-      final crossPaint = Paint()..color = Colors.white.withOpacity(0.5)..strokeWidth = 1.0;
-      canvas.drawLine(Offset(cx, 0), Offset(cx, size.height - padBottom), crossPaint);
-      canvas.drawLine(Offset(0, cy), Offset(chartWidth, cy), crossPaint);
-
-      // برچسب قیمت نقطه لمس‌شده
-      final touchPrice = effMaxP - ((cy - padTop) / chartHeight * effRange);
-      final touchStr = isToman ? touchPrice.toInt().toString() : touchPrice.toStringAsFixed(2);
-      final touchTp = TextPainter(
-        text: TextSpan(text: touchStr, style: const TextStyle(color: Colors.black, fontSize: 9, fontWeight: FontWeight.bold)),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(Rect.fromLTWH(chartWidth + 2, cy - 9, touchTp.width + 8, 18), const Radius.circular(4)),
-        Paint()..color = const Color(0xFFFFD700),
-      );
-      touchTp.paint(canvas, Offset(chartWidth + 6, cy - 6));
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant InteractiveCandlePainter oldDelegate) => true;
 }
