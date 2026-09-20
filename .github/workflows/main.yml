@@ -28,9 +28,8 @@ jobs:
           flutter create --org com.ilia.goldbot --project-name goldbot my_app
           cd my_app
           flutter pub add http
-          flutter pub add url_launcher
 
-          # تنظیم مجوزهای اینترنت و باز کردن مرورگر
+          # مجوز اینترنت
           sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"\/>' android/app/src/main/AndroidManifest.xml
 
           cp ../lib/main.dart lib/main.dart
