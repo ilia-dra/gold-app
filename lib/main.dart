@@ -37,20 +37,22 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProviderStateMixin {
   final String baseUrl = "https://worker-production-6eb2.up.railway.app";
   bool isLoading = true;
   Map<String, dynamic> pricesData = {};
-  Map<String, dynamic> latestReport = {};
+  Map<String, dynamic> news3DaysData = {};
   String errorMessage = "";
   Timer? _liveAutoRefreshTimer;
+  late TabController _tabController;
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 3, vsync: this);
     fetchData();
 
-    // به‌روزرسانی زنده (Live) هر ۱۰ ثانیه یک‌بار به صورت کاملاً بی‌صدا و نامحسوس
+    // همگام‌سازی ۱۰ ثانیه‌ای لایو بدون لودینگ
     _liveAutoRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       fetchData(isSilent: true);
     });
@@ -59,6 +61,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void dispose() {
     _liveAutoRefreshTimer?.cancel();
+    _tabController.dispose();
     super.dispose();
   }
 
@@ -71,14 +74,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     try {
-      final pRes = await http.get(Uri.parse('$baseUrl/api/prices')).timeout(const Duration(seconds: 10));
-      final rRes = await http.get(Uri.parse('$baseUrl/api/latest')).timeout(const Duration(seconds: 10));
+      final pRes = await http.get(Uri.parse('$baseUrl/api/prices')).timeout(const Duration(seconds: 8));
+      final nRes = await http.get(Uri.parse('$baseUrl/api/news-3days')).timeout(const Duration(seconds: 8));
 
-      if (pRes.statusCode == 200 && rRes.statusCode == 200) {
+      if (pRes.statusCode == 200 && nRes.statusCode == 200) {
         if (mounted) {
           setState(() {
             pricesData = json.decode(utf8.decode(pRes.bodyBytes));
-            latestReport = json.decode(utf8.decode(rRes.bodyBytes));
+            news3DaysData = json.decode(utf8.decode(nRes.bodyBytes));
             isLoading = false;
           });
         }
@@ -88,14 +91,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     } catch (e) {
       if (!isSilent && mounted) {
         setState(() {
-          errorMessage = "خطا در برقراری ارتباط با سرور. لطفاً اینترنت را بررسی کنید.";
+          errorMessage = "خطا در اتصال به سرور. اینترنت گوشی را بررسی کنید.";
           isLoading = false;
         });
       }
     }
   }
 
-  // باز کردن مطمئن لینک‌های TradingView و TGJU
   Future<void> _openExternalLink(String url) async {
     final uri = Uri.parse(url);
     try {
@@ -149,6 +151,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final linkType = item['link_type']?.toString() ?? 'tgju';
     final chartUrl = item['chart_url']?.toString() ?? 'https://www.tgju.org/';
     final isTradingView = linkType == 'tradingview';
+    final change = item['change']?.toString() ?? '۰.۰٪';
+    final isNegative = change.contains('-');
 
     showModalBottomSheet(
       context: context,
@@ -197,7 +201,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         Text('${item['current_price']} ${item['unit']}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-                        Text(item['change']?.toString() ?? '۰.۰٪', style: const TextStyle(color: Color(0xFF00E676), fontSize: 12, fontWeight: FontWeight.bold)),
+                        Text(
+                          change,
+                          style: TextStyle(
+                            color: isNegative ? const Color(0xFFF23645) : const Color(0xFF00E676),
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ],
                     ),
                   ],
@@ -212,7 +223,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('🔻 کف قیمت امروز', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                            const Text('🔻 کمترین قیمت امروز', style: TextStyle(color: Colors.grey, fontSize: 11)),
                             const SizedBox(height: 2),
                             Text('${item['low']} ${item['unit']}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
                           ],
@@ -227,7 +238,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('🔺 سقف قیمت امروز', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                            const Text('🔺 بیشترین قیمت امروز', style: TextStyle(color: Colors.grey, fontSize: 11)),
                             const SizedBox(height: 2),
                             Text('${item['high']} ${item['unit']}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
                           ],
@@ -237,8 +248,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
                 const SizedBox(height: 20),
-
-                // دکمه اتصال مستقیم به چارت زنده TradingView یا TGJU
                 SizedBox(
                   width: double.infinity,
                   height: 50,
@@ -271,9 +280,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final Map<String, dynamic> assets = pricesData['assets'] != null
         ? Map<String, dynamic>.from(pricesData['assets'])
         : {};
-    final Map<String, dynamic> structured = latestReport['structured'] != null
-        ? Map<String, dynamic>.from(latestReport['structured'])
-        : {};
+
+    final List<dynamic> todayList = news3DaysData['today'] ?? [];
+    final List<dynamic> yesterdayList = news3DaysData['yesterday'] ?? [];
+    final List<dynamic> twoDaysAgoList = news3DaysData['two_days_ago'] ?? [];
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -287,7 +297,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const SizedBox(width: 8),
               const Text('Goldbotop Intel', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
               const SizedBox(width: 8),
-              // بج لایو بودن اتصال زنده
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
@@ -295,18 +304,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(color: const Color(0xFF00E676).withOpacity(0.4)),
                 ),
-                child: const Row(
-                  children: [
-                    Text('🟢 زنده', style: TextStyle(color: Color(0xFF00E676), fontSize: 10, fontWeight: FontWeight.bold)),
-                  ],
-                ),
+                child: const Text('🟢 زنده', style: TextStyle(color: Color(0xFF00E676), fontSize: 10, fontWeight: FontWeight.bold)),
               ),
             ],
           ),
           actions: [
             IconButton(
               icon: const Icon(Icons.refresh, color: Color(0xFFFFD700)),
-              tooltip: 'به‌روزرسانی دستی',
+              tooltip: 'به‌روزرسانی',
               onPressed: () => fetchData(),
             ),
           ],
@@ -344,15 +349,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         const SizedBox(height: 12),
                         _buildAssetGrid(assets),
                         const SizedBox(height: 24),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+
+                        // هدر و تب‌های دسته‌بندی ۳ روزه اخبار
+                        const Row(
                           children: [
-                            const Text('🧠 تحلیل هوشمند اخبار و تارگت‌ها', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-                            Text(latestReport['last_updated']?.toString() ?? '', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                            Icon(Icons.auto_awesome_rounded, color: Color(0xFFFFD700), size: 20),
+                            SizedBox(width: 8),
+                            Text('پایش هوشمند اخبار موثر بر بازار', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
                           ],
                         ),
                         const SizedBox(height: 12),
-                        _buildNewsCard(structured),
+                        Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E222D),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: TabBar(
+                            controller: _tabController,
+                            indicator: BoxDecoration(
+                              color: const Color(0xFF2962FF),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            labelColor: Colors.white,
+                            unselectedLabelColor: Colors.white60,
+                            labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            tabs: const [
+                              Tab(text: 'امروز'),
+                              Tab(text: 'روز قبل'),
+                              Tab(text: '۲ روز قبل'),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+
+                        // نمایش محتوای ۳ تب با ارتفاع متناسب
+                        AnimatedBuilder(
+                          animation: _tabController,
+                          builder: (context, _) {
+                            if (_tabController.index == 0) {
+                              return _buildNewsList(todayList, "هنوز خبری برای امروز ثبت نشده است.");
+                            } else if (_tabController.index == 1) {
+                              return _buildNewsList(yesterdayList, "تحلیلی برای روز قبل در آرشیو نیست.");
+                            } else {
+                              return _buildNewsList(twoDaysAgoList, "تحلیلی برای ۲ روز قبل در آرشیو نیست.");
+                            }
+                          },
+                        ),
                       ],
                     ),
         ),
@@ -366,7 +408,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
     return GridView.builder(
       shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
+      physics: const NeverScrollableScrollPhysics),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         crossAxisSpacing: 10,
@@ -378,6 +420,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final key = assets.keys.toList()[idx];
         final item = Map<String, dynamic>.from(assets[key]);
         final accentColor = _getAssetColor(key);
+        final change = item['change']?.toString() ?? '۰.۰٪';
+        final isNegative = change.contains('-');
 
         return InkWell(
           borderRadius: BorderRadius.circular(14),
@@ -432,9 +476,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         Text(item['unit']?.toString() ?? '', style: const TextStyle(fontSize: 9, color: Colors.grey)),
                       ],
                     ),
-                    Text(
-                      item['change']?.toString() ?? '۰.۰٪',
-                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF00E676)),
+                    // درصد تغییرات با رنگ‌بندی دقیق
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: (isNegative ? const Color(0xFFF23645) : const Color(0xFF00E676)).withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        change,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: isNegative ? const Color(0xFFF23645) : const Color(0xFF00E676),
+                        ),
+                      ),
                     ),
                   ],
                 )
@@ -446,7 +502,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildNewsCard(Map<String, dynamic> n) {
+  Widget _buildNewsList(List<dynamic> list, String emptyMessage) {
+    if (list.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 30),
+        alignment: Center,
+        child: Text(emptyMessage, style: const TextStyle(color: Colors.grey, fontSize: 13)),
+      );
+    }
+    return ListView.separated(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: list.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (ctx, idx) {
+        final item = list[idx];
+        final structured = item['structured'] ?? {};
+        final timeStr = item['timestamp']?.toString() ?? '';
+        return _buildNewsCard(structured, timeStr);
+      },
+    );
+  }
+
+  Widget _buildNewsCard(Map<String, dynamic> n, String timestamp) {
     final title = n['title']?.toString() ?? 'گزارش تحلیلی بازار';
     final importance = n['importance']?.toString() ?? '🟡 متوسط';
     final affected = n['affected']?.toString() ?? '#طلا #دلار';
@@ -489,6 +567,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     style: const TextStyle(fontSize: 10, color: Color(0xFFFFD700), fontWeight: FontWeight.bold),
                   ),
                 ),
+                Text(timestamp.split(' - ').last, style: const TextStyle(fontSize: 10, color: Colors.grey)),
               ],
             ),
           ),
@@ -496,13 +575,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const Divider(color: Colors.white10, height: 20),
             _infoRow('🌐 منبع انتشار:', n['source']?.toString() ?? '---'),
             const SizedBox(height: 6),
-            _infoRow('⏰ زمان و ماهیت:', '${n['timing'] ?? ''} (${n['exact_time'] ?? ''})'),
+            _infoRow('⏰ زمان رویداد:', '${n['timing'] ?? ''} (${n['exact_time'] ?? ''})'),
             const SizedBox(height: 6),
             _infoRow('🧭 جهت حرکت:', direction),
             const SizedBox(height: 12),
             const Text('📝 تحلیل اثر اقتصادی:', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
-            Text(n['economic_analysis'] ?? '---', style: const TextStyle(fontSize: 13, height: 1.7, color: Colors.white)),
+            Text(n['economic_analysis']?.toString() ?? '---', style: const TextStyle(fontSize: 13, height: 1.7, color: Colors.white)),
             const SizedBox(height: 12),
             const Text('🎯 تارگت و پیش‌بینی قیمت:', style: TextStyle(color: Color(0xFFFFD700), fontSize: 12, fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
@@ -514,7 +593,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: Colors.white10),
               ),
-              child: Text(n['target'] ?? '---', style: const TextStyle(fontSize: 13, height: 1.6, color: Colors.white)),
+              child: Text(n['target']?.toString() ?? '---', style: const TextStyle(fontSize: 13, height: 1.6, color: Colors.white)),
             ),
           ],
         ),
