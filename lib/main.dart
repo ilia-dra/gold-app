@@ -51,7 +51,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     _tabController = TabController(length: 3, vsync: this);
     fetchData();
 
-    // به‌روزرسانی لایو هر ۱۰ ثانیه بدون پرش صفحه
+    // همگام‌سازی ۱۰ ثانیه‌ای لایو بدون لودینگ
     _liveAutoRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       fetchData(isSilent: true);
     });
@@ -85,12 +85,12 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
           });
         }
       } else {
-        throw Exception("خطا در پاسخ سرور");
+        throw Exception("خطا در پاسخ");
       }
     } catch (e) {
       if (!isSilent && mounted) {
         setState(() {
-          errorMessage = "خطا در اتصال به سرور. اینترنت گوشی را بررسی کنید.";
+          errorMessage = "خطا در اتصال به سرور. اینترنت را بررسی کنید.";
           isLoading = false;
         });
       }
@@ -254,8 +254,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          isTradingView ? 'مرجع جهانی: TradingView ($chartUrl)' : 'مرجع رسمی داخلی: TGJU ($chartUrl)',
-                          style: const TextStyle(color: Colors.white70, fontSize: 11),
+                          isTradingView ? 'مرجع جهانی: TradingView\n$chartUrl' : 'مرجع رسمی داخلی: TGJU\n$chartUrl',
+                          style: const TextStyle(color: Colors.white70, fontSize: 11, height: 1.4),
                         ),
                       ),
                     ],
@@ -344,7 +344,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         _buildAssetGrid(assets),
                         const SizedBox(height: 24),
 
-                        // هدر بخش اخبار با تب‌های سه‌روزه
                         const Row(
                           children: [
                             Icon(Icons.auto_awesome_rounded, color: Color(0xFFFFD700), size: 20),
@@ -376,7 +375,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         ),
                         const SizedBox(height: 14),
 
-                        // نمایش محتوای تب فعال
                         AnimatedBuilder(
                           animation: _tabController,
                           builder: (context, _) {
