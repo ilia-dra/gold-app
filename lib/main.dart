@@ -51,7 +51,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     _tabController = TabController(length: 3, vsync: this);
     fetchData();
 
-    // همگام‌سازی ۱۰ ثانیه‌ای لایو بدون لودینگ
+    // همگام‌سازی زنده هر ۱۰ ثانیه بدون پرش صفحه
     _liveAutoRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       fetchData(isSilent: true);
     });
@@ -85,12 +85,12 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
           });
         }
       } else {
-        throw Exception("خطا در پاسخ");
+        throw Exception("پاسخ نامعتبر از سرور");
       }
     } catch (e) {
       if (!isSilent && mounted) {
         setState(() {
-          errorMessage = "خطا در اتصال به سرور. اینترنت را بررسی کنید.";
+          errorMessage = "خطا در برقراری ارتباط با سرور. لطفاً اتصال اینترنت را چک کنید.";
           isLoading = false;
         });
       }
@@ -101,6 +101,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     switch (key) {
       case "dollar":
         return Icons.attach_money_rounded;
+      case "tether":
+        return Icons.currency_bitcoin_rounded;
       case "ons_gold":
         return Icons.monetization_on_rounded;
       case "geram18":
@@ -122,6 +124,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     switch (key) {
       case "dollar":
         return const Color(0xFF00E676);
+      case "tether":
+        return const Color(0xFF26A69A); // رنگ فیروزه‌ای اختصاصی تتر
       case "ons_gold":
       case "geram18":
       case "mesghal":
@@ -254,7 +258,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          isTradingView ? 'مرجع جهانی: TradingView\n$chartUrl' : 'مرجع رسمی داخلی: TGJU\n$chartUrl',
+                          isTradingView ? 'مرجع جهانی چارت: TradingView\n$chartUrl' : 'مرجع رسمی نرخ‌ها: TGJU\n$chartUrl',
                           style: const TextStyle(color: Colors.white70, fontSize: 11, height: 1.4),
                         ),
                       ),
@@ -305,7 +309,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
           actions: [
             IconButton(
               icon: const Icon(Icons.refresh, color: Color(0xFFFFD700)),
-              tooltip: 'به‌روزرسانی',
+              tooltip: 'به‌روزرسانی دستی',
               onPressed: () => fetchData(),
             ),
           ],
@@ -344,6 +348,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         _buildAssetGrid(assets),
                         const SizedBox(height: 24),
 
+                        // بخش هوشمند اخبار و تب‌های سه‌روزه
                         const Row(
                           children: [
                             Icon(Icons.auto_awesome_rounded, color: Color(0xFFFFD700), size: 20),
@@ -468,6 +473,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         Text(item['unit']?.toString() ?? '', style: const TextStyle(fontSize: 9, color: Colors.grey)),
                       ],
                     ),
+                    // نمایش درصد تغییرات روزانه با رنگ سبز و قرمز
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
@@ -518,7 +524,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   Widget _buildNewsCard(Map<String, dynamic> n, String timestamp) {
     final title = n['title']?.toString() ?? 'گزارش تحلیلی بازار';
     final importance = n['importance']?.toString() ?? '🟡 متوسط';
-    final affected = n['affected']?.toString() ?? '#طلا #دلار';
+    final affected = n['affected']?.toString() ?? '#طلا #دلار #تتر';
     final direction = n['direction']?.toString() ?? '⚪️ نوسانی';
 
     return Container(
