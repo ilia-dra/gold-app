@@ -66,7 +66,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           isLoading = false;
         });
       } else {
-        throw Exception("خطا در ارتباط با سرور");
+        throw Exception("خطا در پاسخ");
       }
     } catch (e) {
       setState(() {
@@ -274,7 +274,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               onPressed: () {
                 final goldData = assets['ons_gold'] != null
                     ? Map<String, dynamic>.from(assets['ons_gold'])
-                    : {"name": "انس جهانی طلا", "symbol": "XAU / USD", "unit": "دلار", "current_price": "4,383.45", "low": "4,370.00", "high": "4,395.00", "change": "۰.۰٪"};
+                    : {"name": "انس جهانی طلا", "symbol": "XAU / USD", "unit": "دلار", "current_price": "4,383.50", "low": "4,370.00", "high": "4,395.00", "change": "۰.۰٪"};
                 _openCandleChart("ons_gold", goldData);
               },
             ),
@@ -520,7 +520,7 @@ class CandleModel {
   double get changePct => open > 0 ? ((close - open) / open) * 100 : 0.0;
 }
 
-// میزکار تکنیکال تعاملی با قابلیت جابه‌جایی، زوم و تایم‌فریم
+// میزکار تکنیکال تعاملی با زوم، حرکت طبیعی و کشش عمودی محور قیمت
 class ProfessionalTradingChart extends StatefulWidget {
   final String initialKey;
   final Map<String, dynamic> initialAsset;
@@ -538,11 +538,12 @@ class _ProfessionalTradingChartState extends State<ProfessionalTradingChart> {
   bool isLoading = true;
   List<CandleModel> candles = [];
 
-  // پارامترهای کنترل حرکت و زوم چارت
+  // متغیرهای فیزیک حرکت، زوم و مقیاس عمودی
   double _scrollOffset = 0.0;
   double _candleWidth = 14.0;
   double _baseCandleWidth = 14.0;
-  double _startScrollOffset = 0.0;
+  double _priceScaleFactor = 1.0; // ضریب فشرده‌سازی/کشش عمودی
+  bool _isDraggingPriceScale = false;
   Offset? _crosshairPoint;
 
   final Map<String, String> symbolNames = {
@@ -576,6 +577,7 @@ class _ProfessionalTradingChartState extends State<ProfessionalTradingChart> {
       isLoading = true;
       _crosshairPoint = null;
       _scrollOffset = 0.0;
+      _priceScaleFactor = 1.0; // ریست مقیاس عمودی هنگام تعویض نماد
     });
 
     try {
@@ -646,7 +648,7 @@ class _ProfessionalTradingChartState extends State<ProfessionalTradingChart> {
         ),
         body: Column(
           children: [
-            // نوار انتخاب نماد
+            // نوار انتخاب سریع نمادها
             Container(
               height: 42,
               color: const Color(0xFF1E222D),
@@ -672,7 +674,7 @@ class _ProfessionalTradingChartState extends State<ProfessionalTradingChart> {
               ),
             ),
 
-            // نوار ابزار تایم‌فریم‌ها
+            // نوار انتخاب تایم‌فریم و راهنما
             Container(
               height: 38,
               padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -710,12 +712,11 @@ class _ProfessionalTradingChartState extends State<ProfessionalTradingChart> {
                     );
                   }).toList(),
                   const Spacer(),
-                  // راهنمای زوم و حرکت
                   const Row(
                     children: [
-                      Icon(Icons.pan_tool_alt_rounded, size: 14, color: Colors.grey),
-                      SizedBox(width: 4),
-                      Text('درگ برای حرکت / زوم با ۲ انگشت', style: TextStyle(color: Colors.grey, fontSize: 10)),
+                      Icon(Icons.swap_vert_rounded, size: 14, color: Color(0xFFFFD700)),
+                      SizedBox(width: 3),
+                      Text('محور قیمت: درگ عمودی', style: TextStyle(color: Colors.grey, fontSize: 10)),
                     ],
                   ),
                 ],
@@ -728,11 +729,12 @@ class _ProfessionalTradingChartState extends State<ProfessionalTradingChart> {
                   ? const Center(child: CircularProgressIndicator(color: Color(0xFF2962FF)))
                   : LayoutBuilder(
                       builder: (ctx, constraints) {
-                        final chartWidth = constraints.maxWidth - 65.0; // فضا برای مقیاس قیمت راست
+                        const padRight = 65.0;
+                        final chartWidth = constraints.maxWidth - padRight;
                         final maxScroll = ((candles.length * _candleWidth) - chartWidth).clamp(0.0, double.infinity);
                         _scrollOffset = _scrollOffset.clamp(0.0, maxScroll);
 
-                        // پیدا کردن کندل زیر نشانگر
+                        // پیدا کردن کندل تحت نشانگر کراس‌هیر
                         if (_crosshairPoint != null) {
                           final touchX = _crosshairPoint!.dx;
                           for (int i = 0; i < candles.length; i++) {
@@ -747,26 +749,40 @@ class _ProfessionalTradingChartState extends State<ProfessionalTradingChart> {
 
                         return Stack(
                           children: [
-                            // تشخیص هوشمند حرکات لمسی (Drag & Pinch)
                             GestureDetector(
+                              onDoubleTapDown: (details) {
+                                // دابل‌تپ روی نوار قیمت = ریست خودکار به اندازه اولیه
+                                if (details.localPosition.dx >= chartWidth) {
+                                  setState(() => _priceScaleFactor = 1.0);
+                                }
+                              },
                               onScaleStart: (details) {
-                                if (details.pointerCount == 1) {
-                                  _startScrollOffset = _scrollOffset;
+                                if (details.localFocalPoint.dx >= chartWidth) {
+                                  _isDraggingPriceScale = true;
                                 } else {
-                                  _baseCandleWidth = _candleWidth;
+                                  _isDraggingPriceScale = false;
+                                  if (details.pointerCount > 1) {
+                                    _baseCandleWidth = _candleWidth;
+                                  }
                                 }
                               },
                               onScaleUpdate: (details) {
-                                if (details.pointerCount == 1) {
+                                if (_isDraggingPriceScale) {
+                                  // قابلیت TradingView: درگ عمودی روی نوار قیمت برای فشرده/باز کردن عمودی
                                   setState(() {
-                                    // حرکت افقی روی چارت به سمت تاریخچه گذشته یا حال
-                                    _scrollOffset = (_scrollOffset - details.focalPointDelta.dx).clamp(0.0, maxScroll);
+                                    _priceScaleFactor = (_priceScaleFactor - (details.focalPointDelta.dy * 0.008)).clamp(0.25, 4.5);
                                   });
-                                } else if (details.pointerCount == 2) {
-                                  setState(() {
-                                    // زوم و کوچک/بزرگ‌نمایی کندل‌ها
-                                    _candleWidth = (_baseCandleWidth * details.scale).clamp(5.0, 35.0);
-                                  });
+                                } else {
+                                  if (details.pointerCount == 1) {
+                                    setState(() {
+                                      // حرکت کاملاً طبیعی و غیربرعکس: کشیدن به راست = گذشته / کشیدن به چپ = حال
+                                      _scrollOffset = (_scrollOffset + details.focalPointDelta.dx).clamp(0.0, maxScroll);
+                                    });
+                                  } else if (details.pointerCount >= 2) {
+                                    setState(() {
+                                      _candleWidth = (_baseCandleWidth * details.scale).clamp(4.0, 35.0);
+                                    });
+                                  }
                                 }
                               },
                               onLongPressStart: (details) => setState(() => _crosshairPoint = details.localPosition),
@@ -778,13 +794,14 @@ class _ProfessionalTradingChartState extends State<ProfessionalTradingChart> {
                                   candles: candles,
                                   candleWidth: _candleWidth,
                                   scrollOffset: _scrollOffset,
+                                  priceScaleFactor: _priceScaleFactor,
                                   crosshairPoint: _crosshairPoint,
                                   isToman: widget.initialAsset['unit'] == 'تومان',
                                 ),
                               ),
                             ),
 
-                            // کادر اطلاعات کندل فعال در بالای چارت (HUD)
+                            // هدر هوشمند اطلاعات کندل (OHLC HUD)
                             if (focusedCandle != null)
                               Positioned(
                                 top: 8,
@@ -792,9 +809,9 @@ class _ProfessionalTradingChartState extends State<ProfessionalTradingChart> {
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF1E222D).withOpacity(0.9),
+                                    color: const Color(0xFF1E222D).withOpacity(0.92),
                                     borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(color: Colors.white10),
+                                    border: Border.all(color: Colors.white12),
                                   ),
                                   child: Row(
                                     children: [
@@ -818,8 +835,26 @@ class _ProfessionalTradingChartState extends State<ProfessionalTradingChart> {
                                 ),
                               ),
 
-                            // دکمه بازگشت به جدیدترین قیمت در صورت ورق زدن به گذشته
-                            if (_scrollOffset > 40)
+                            // دکمه ریست مقیاس عمودی قیمت در صورت تغییر
+                            if (_priceScaleFactor != 1.0)
+                              Positioned(
+                                top: 8,
+                                right: 75,
+                                child: InkWell(
+                                  onTap: () => setState(() => _priceScaleFactor = 1.0),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF2962FF),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: const Text('Auto Fit', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                  ),
+                                ),
+                              ),
+
+                            // دکمه بازگشت سریع به جدیدترین قیمت
+                            if (_scrollOffset > 50)
                               Positioned(
                                 bottom: 35,
                                 left: 14,
@@ -846,7 +881,7 @@ class _ProfessionalTradingChartState extends State<ProfessionalTradingChart> {
   }
 
   Widget _hudText(String prefix, double val, {Color? color}) {
-    final s = val > 1000 ? val.toInt().toString() : val.toStringAsFixed(2);
+    final s = val > 1000 ? val.toInt().toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},') : val.toStringAsFixed(2);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 3),
       child: Text('$prefix $s', style: TextStyle(color: color ?? Colors.white70, fontSize: 10, fontFamily: 'monospace')),
@@ -854,11 +889,12 @@ class _ProfessionalTradingChartState extends State<ProfessionalTradingChart> {
   }
 }
 
-// نقاش حرفه‌ای چارت با رندرینگ TradingView و مقیاس قیمت خودکار
+// نقاش حرفه‌ای کندل‌استیک با مقیاس داینامیک و پشتیبانی از کشش محور Y
 class InteractiveCandlePainter extends CustomPainter {
   final List<CandleModel> candles;
   final double candleWidth;
   final double scrollOffset;
+  final double priceScaleFactor;
   final Offset? crosshairPoint;
   final bool isToman;
 
@@ -866,6 +902,7 @@ class InteractiveCandlePainter extends CustomPainter {
     required this.candles,
     required this.candleWidth,
     required this.scrollOffset,
+    required this.priceScaleFactor,
     this.crosshairPoint,
     required this.isToman,
   });
@@ -874,13 +911,13 @@ class InteractiveCandlePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (candles.isEmpty) return;
 
-    final double padTop = 30.0;
-    final double padBottom = 26.0;
-    final double padRight = 65.0;
+    const double padTop = 32.0;
+    const double padBottom = 26.0;
+    const double padRight = 65.0;
     final double chartHeight = size.height - padTop - padBottom;
     final double chartWidth = size.width - padRight;
 
-    // پیدا کردن کندل‌های داخل کادر برای محاسبه سقف و کف پویا
+    // پیدا کردن کندل‌های داخل کادر جهت اندازه‌گیری سقف و کف بازه دید
     List<CandleModel> visibleCandles = [];
     for (int i = 0; i < candles.length; i++) {
       final x = chartWidth - ((candles.length - 1 - i) * candleWidth) + scrollOffset - (candleWidth / 2);
@@ -892,21 +929,23 @@ class InteractiveCandlePainter extends CustomPainter {
 
     double minP = visibleCandles.map((c) => c.low).reduce((a, b) => a < b ? a : b);
     double maxP = visibleCandles.map((c) => c.high).reduce((a, b) => a > b ? a : b);
-    double range = (maxP - minP) == 0 ? 1.0 : (maxP - minP);
+    double baseRange = (maxP - minP) == 0 ? 1.0 : (maxP - minP);
 
-    // افزودن حاشیه امنیتی عمودی
-    minP -= range * 0.08;
-    maxP += range * 0.08;
-    range = maxP - minP;
+    // اعمال فشرده‌سازی/کشش عمودی محور قیمت
+    final midP = (minP + maxP) / 2.0;
+    final adjustedHalfRange = (baseRange / 2.0) / priceScaleFactor;
+    final effMinP = midP - adjustedHalfRange;
+    final effMaxP = midP + adjustedHalfRange;
+    final effRange = effMaxP - effMinP;
 
-    // خطوط افقی شبکه و برچسب‌های قیمت در ستون سمت راست
+    // خطوط افقی و اعداد قیمت روی محور راست
     final gridPaint = Paint()..color = const Color(0xFF1E222D)..strokeWidth = 1.0;
     for (int i = 0; i <= 4; i++) {
       final y = padTop + (chartHeight / 4) * i;
       canvas.drawLine(Offset(0, y), Offset(chartWidth, y), gridPaint);
 
-      final p = maxP - (range / 4) * i;
-      final pStr = isToman ? (p > 1000 ? (p.toInt()).toString() : p.toStringAsFixed(0)) : p.toStringAsFixed(2);
+      final p = effMaxP - (effRange / 4) * i;
+      final pStr = isToman ? (p > 1000 ? p.toInt().toString() : p.toStringAsFixed(0)) : p.toStringAsFixed(2);
       final tp = TextPainter(
         text: TextSpan(text: pStr, style: const TextStyle(color: Color(0xFF787B86), fontSize: 9, fontFamily: 'monospace')),
         textDirection: TextDirection.ltr,
@@ -914,9 +953,9 @@ class InteractiveCandlePainter extends CustomPainter {
       tp.paint(canvas, Offset(chartWidth + 6, y - 5));
     }
 
-    // قلم‌های کندل‌های صعودی و نزولی به سبک TradingView
-    final bullColor = const Color(0xFF089981);
-    final bearColor = const Color(0xFFF23645);
+    // قلم‌های کندل‌های صعودی و نزولی (رنگ‌های استاندارد تریدینگ‌ویو)
+    const bullColor = Color(0xFF089981);
+    const bearColor = Color(0xFFF23645);
 
     final bullBodyPaint = Paint()..color = bullColor..style = PaintingStyle.fill;
     final bearBodyPaint = Paint()..color = bearColor..style = PaintingStyle.fill;
@@ -929,10 +968,10 @@ class InteractiveCandlePainter extends CustomPainter {
       if (x < -candleWidth || x > chartWidth + candleWidth) continue;
 
       final c = candles[i];
-      final yHigh = padTop + chartHeight - ((c.high - minP) / range * chartHeight);
-      final yLow = padTop + chartHeight - ((c.low - minP) / range * chartHeight);
-      final yOpen = padTop + chartHeight - ((c.open - minP) / range * chartHeight);
-      final yClose = padTop + chartHeight - ((c.close - minP) / range * chartHeight);
+      final yHigh = padTop + chartHeight - ((c.high - effMinP) / effRange * chartHeight);
+      final yLow = padTop + chartHeight - ((c.low - effMinP) / effRange * chartHeight);
+      final yOpen = padTop + chartHeight - ((c.open - effMinP) / effRange * chartHeight);
+      final yClose = padTop + chartHeight - ((c.close - effMinP) / effRange * chartHeight);
 
       final isBull = c.isBullish;
       canvas.drawLine(Offset(x, yHigh), Offset(x, yLow), isBull ? bullWickPaint : bearWickPaint);
@@ -940,15 +979,15 @@ class InteractiveCandlePainter extends CustomPainter {
       final top = isBull ? yClose : yOpen;
       final bottom = isBull ? yOpen : yClose;
       final bHeight = (bottom - top).abs() < 1.5 ? 1.5 : (bottom - top).abs();
-      final bWidth = (candleWidth * 0.7).clamp(2.5, 24.0);
+      final bWidth = (candleWidth * 0.72).clamp(2.5, 24.0);
 
       canvas.drawRect(
         Rect.fromCenter(center: Offset(x, top + bHeight / 2), width: bWidth, height: bHeight),
         isBull ? bullBodyPaint : bearBodyPaint,
       );
 
-      // برچسب زمان در محور پایین برای برخی کندل‌ها
-      if (i % 6 == 0) {
+      // نمایش تاریخ در محور زمان برای فواصل منظم
+      if (i % 8 == 0) {
         final dateTp = TextPainter(
           text: TextSpan(text: c.time.split(' ').last, style: const TextStyle(color: Color(0xFF787B86), fontSize: 8)),
           textDirection: TextDirection.ltr,
@@ -957,19 +996,18 @@ class InteractiveCandlePainter extends CustomPainter {
       }
     }
 
-    // خط تراز آخرین قیمت لحظه‌ای (Dashed Price Line)
+    // خط افقی نقطه‌چین آخرین قیمت لحظه‌ای
     final lastC = candles.last;
-    final lastY = padTop + chartHeight - ((lastC.close - minP) / range * chartHeight);
+    final lastY = padTop + chartHeight - ((lastC.close - effMinP) / effRange * chartHeight);
     final lastPaint = Paint()..color = lastC.isBullish ? bullColor : bearColor..strokeWidth = 1.0;
     
-    // کشیدن خط تراز نقطه‌چین
     double dashX = 0;
     while (dashX < chartWidth) {
       canvas.drawLine(Offset(dashX, lastY), Offset(dashX + 4, lastY), lastPaint);
       dashX += 8;
     }
 
-    // بج آخرین قیمت روی محور عمودی سمت راست
+    // بج آخرین قیمت روی محور عمودی
     final lastStr = isToman ? (lastC.close > 1000 ? lastC.close.toInt().toString() : lastC.close.toStringAsFixed(0)) : lastC.close.toStringAsFixed(2);
     final badgeTp = TextPainter(
       text: TextSpan(text: lastStr, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
@@ -983,7 +1021,7 @@ class InteractiveCandlePainter extends CustomPainter {
     canvas.drawRRect(badgeRect, lastPaint);
     badgeTp.paint(canvas, Offset(chartWidth + 6, lastY - 6));
 
-    // کراس‌هیر لمسی (Crosshair)
+    // خطوط کراس‌هیر لمسی
     if (crosshairPoint != null) {
       final cx = crosshairPoint!.dx.clamp(0.0, chartWidth);
       final cy = crosshairPoint!.dy.clamp(padTop, padTop + chartHeight);
@@ -992,8 +1030,8 @@ class InteractiveCandlePainter extends CustomPainter {
       canvas.drawLine(Offset(cx, 0), Offset(cx, size.height - padBottom), crossPaint);
       canvas.drawLine(Offset(0, cy), Offset(chartWidth, cy), crossPaint);
 
-      // برچسب قیمت نقطه لمس شده روی محور راست
-      final touchPrice = maxP - ((cy - padTop) / chartHeight * range);
+      // برچسب قیمت نقطه لمس‌شده
+      final touchPrice = effMaxP - ((cy - padTop) / chartHeight * effRange);
       final touchStr = isToman ? touchPrice.toInt().toString() : touchPrice.toStringAsFixed(2);
       final touchTp = TextPainter(
         text: TextSpan(text: touchStr, style: const TextStyle(color: Colors.black, fontSize: 9, fontWeight: FontWeight.bold)),
