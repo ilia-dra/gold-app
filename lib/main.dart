@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -41,6 +42,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   final String baseUrl = "https://worker-production-6eb2.up.railway.app";
   bool isLoading = true;
   Map<String, dynamic> pricesData = {};
+  Map<String, dynamic> previousPrices = {};
   Map<String, dynamic> news3DaysData = {};
   String errorMessage = "";
   Timer? _liveAutoRefreshTimer;
@@ -52,8 +54,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     _tabController = TabController(length: 3, vsync: this);
     fetchData();
 
-    // همگام‌سازی زنده قیمت‌ها هر ۱۰ ثانیه یک‌بار در پس‌زمینه
-    _liveAutoRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+    // همگام‌سازی فوق سریع نرخ‌ها هر ۳ ثانیه یک‌بار
+    _liveAutoRefreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       fetchData(isSilent: true);
     });
   }
@@ -74,24 +76,27 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     }
 
     try {
-      final pRes = await http.get(Uri.parse('$baseUrl/api/prices')).timeout(const Duration(seconds: 8));
-      final nRes = await http.get(Uri.parse('$baseUrl/api/news-3days')).timeout(const Duration(seconds: 8));
+      final pRes = await http.get(Uri.parse('$baseUrl/api/prices')).timeout(const Duration(seconds: 4));
 
-      if (pRes.statusCode == 200 && nRes.statusCode == 200) {
-        if (mounted) {
-          setState(() {
-            pricesData = json.decode(utf8.decode(pRes.bodyBytes));
-            news3DaysData = json.decode(utf8.decode(nRes.bodyBytes));
-            isLoading = false;
-          });
+      if (!isSilent || news3DaysData.isEmpty) {
+        final nRes = await http.get(Uri.parse('$baseUrl/api/news-3days')).timeout(const Duration(seconds: 4));
+        if (nRes.statusCode == 200 && mounted) {
+          news3DaysData = json.decode(utf8.decode(nRes.bodyBytes));
         }
-      } else {
-        throw Exception("پاسخ نامعتبر از سرور");
+      }
+
+      if (pRes.statusCode == 200 && mounted) {
+        final newPrices = json.decode(utf8.decode(pRes.bodyBytes));
+        setState(() {
+          previousPrices = pricesData;
+          pricesData = newPrices;
+          isLoading = false;
+        });
       }
     } catch (e) {
       if (!isSilent && mounted) {
         setState(() {
-          errorMessage = "خطا در دریافت اطلاعات زنده. اتصال اینترنت را بررسی کنید.";
+          errorMessage = "خطا در دریافت نرخ‌های زنده. اتصال اینترنت را چک کنید.";
           isLoading = false;
         });
       }
@@ -101,21 +106,18 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   Future<void> _openExternalChart(String urlString) async {
     final uri = Uri.parse(urlString);
     try {
-      final canLaunch = await canLaunchUrl(uri);
-      if (canLaunch) {
+      if (await canLaunchUrl(uri)) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
       } else {
-        await launchUrl(uri, mode: LaunchMode.platformDefault);
+        await Clipboard.setData(ClipboardData(text: urlString));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('لینک چارت کپی شد.', textDirection: TextDirection.rtl)),
+          );
+        }
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('خطا در باز کردن چارت: $urlString', textDirection: TextDirection.rtl),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
+      await Clipboard.setData(ClipboardData(text: urlString));
     }
   }
 
@@ -147,7 +149,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       case "dollar":
         return const Color(0xFF00E676);
       case "tether":
-        return const Color(0xFF26A69A); // فیروزه‌ای اختصاصی تتر
+        return const Color(0xFF26A69A);
       case "ons_gold":
       case "geram18":
       case "mesghal":
@@ -160,6 +162,164 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       default:
         return Colors.white;
     }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Map<String, dynamic> assets = pricesData['assets'] != null
+        ? Map<String, dynamic>.from(pricesData['assets'])
+        : {};
+
+    final List<dynamic> todayList = news3DaysData['today'] ?? [];
+    final List<dynamic> yesterdayList = news3DaysData['yesterday'] ?? [];
+    final List<dynamic> twoDaysAgoList = news3DaysData['two_days_ago'] ?? [];
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF131922),
+          elevation: 0,
+          title: Row(
+            children: [
+              const Icon(Icons.shield_rounded, color: Color(0xFFFFD700)),
+              const SizedBox(width: 8),
+              const Text('Goldbotop Intel', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF00E676).withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: const Color(0xFF00E676).withOpacity(0.4)),
+                ),
+                child: const Text('🟢 زنده', style: TextStyle(color: Color(0xFF00E676), fontSize: 10, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh, color: Color(0xFFFFD700)),
+              tooltip: 'به‌روزرسانی',
+              onPressed: () => fetchData(),
+            ),
+          ],
+        ),
+        body: RefreshIndicator(
+          onRefresh: () => fetchData(),
+          color: const Color(0xFFFFD700),
+          child: isLoading
+              ? const Center(child: CircularProgressIndicator(color: Color(0xFFFFD700)))
+              : errorMessage.isNotEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(errorMessage, style: const TextStyle(color: Colors.redAccent)),
+                          const SizedBox(height: 12),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFD700)),
+                            onPressed: () => fetchData(),
+                            child: const Text('تلاش مجدد', style: TextStyle(color: Colors.black)),
+                          )
+                        ],
+                      ),
+                    )
+                  : ListView(
+                      padding: const EdgeInsets.all(16),
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('📊 تابلوی نرخ‌های لحظه‌ای', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                            Text(pricesData['updated_at']?.toString() ?? '', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        _buildAssetGrid(assets),
+                        const SizedBox(height: 24),
+
+                        const Row(
+                          children: [
+                            Icon(Icons.auto_awesome_rounded, color: Color(0xFFFFD700), size: 20),
+                            SizedBox(width: 8),
+                            Text('پایش هوشمند اخبار موثر بر بازار', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E222D),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: TabBar(
+                            controller: _tabController,
+                            indicator: BoxDecoration(
+                              color: const Color(0xFF2962FF),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            labelColor: Colors.white,
+                            unselectedLabelColor: Colors.white60,
+                            labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            tabs: const [
+                              Tab(text: 'امروز'),
+                              Tab(text: 'روز قبل'),
+                              Tab(text: '۲ روز قبل'),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+
+                        AnimatedBuilder(
+                          animation: _tabController,
+                          builder: (context, _) {
+                            if (_tabController.index == 0) {
+                              return _buildNewsList(todayList, "هنوز رویداد موثری برای امروز ثبت نشده است.");
+                            } else if (_tabController.index == 1) {
+                              return _buildNewsList(yesterdayList, "رویدادی برای روز قبل در آرشیو ثبت نشده است.");
+                            } else {
+                              return _buildNewsList(twoDaysAgoList, "رویدادی برای ۲ روز قبل در آرشیو ثبت نشده است.");
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAssetGrid(Map<String, dynamic> assets) {
+    if (assets.isEmpty) {
+      return const Center(child: Text('درحال اتصال به تابلوی زنده...', style: TextStyle(color: Colors.grey)));
+    }
+    final prevAssets = previousPrices['assets'] != null ? Map<String, dynamic>.from(previousPrices['assets']) : {};
+
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 10,
+        mainAxisSpacing: 10,
+        childAspectRatio: 1.28,
+      ),
+      itemCount: assets.length,
+      itemBuilder: (ctx, idx) {
+        final key = assets.keys.toList()[idx];
+        final item = Map<String, dynamic>.from(assets[key]);
+        final prevItem = prevAssets[key] != null ? Map<String, dynamic>.from(prevAssets[key]) : null;
+
+        return LiveTickerCard(
+          assetKey: key,
+          item: item,
+          prevItem: prevItem,
+          accentColor: _getAssetColor(key),
+          iconData: _getAssetIcon(key),
+          onTap: () => _showAssetSheet(key, item),
+        );
+      },
+    );
   }
 
   void _showAssetSheet(String key, Map<String, dynamic> item) {
@@ -264,8 +424,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   ],
                 ),
                 const SizedBox(height: 20),
-
-                // دکمه باز کردن مستقیم و بدون خطای چارت در مرورگر
                 SizedBox(
                   width: double.infinity,
                   height: 48,
@@ -280,235 +438,11 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     },
                     icon: Icon(isTradingView ? Icons.candlestick_chart_rounded : Icons.insights_rounded, color: Colors.white),
                     label: Text(
-                      isTradingView ? 'مشاهده چارت تکنیکال در TradingView' : 'مشاهده چارت و تحلیل در TGJU',
+                      isTradingView ? 'مشاهده زنده چارت در TradingView' : 'مشاهده زنده چارت در TGJU',
                       style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                     ),
                   ),
                 ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final Map<String, dynamic> assets = pricesData['assets'] != null
-        ? Map<String, dynamic>.from(pricesData['assets'])
-        : {};
-
-    final List<dynamic> todayList = news3DaysData['today'] ?? [];
-    final List<dynamic> yesterdayList = news3DaysData['yesterday'] ?? [];
-    final List<dynamic> twoDaysAgoList = news3DaysData['two_days_ago'] ?? [];
-
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF131922),
-          elevation: 0,
-          title: Row(
-            children: [
-              const Icon(Icons.shield_rounded, color: Color(0xFFFFD700)),
-              const SizedBox(width: 8),
-              const Text('Goldbotop Intel', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF00E676).withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: const Color(0xFF00E676).withOpacity(0.4)),
-                ),
-                child: const Text('🟢 زنده', style: TextStyle(color: Color(0xFF00E676), fontSize: 10, fontWeight: FontWeight.bold)),
-              ),
-            ],
-          ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.refresh, color: Color(0xFFFFD700)),
-              tooltip: 'به‌روزرسانی دستی',
-              onPressed: () => fetchData(),
-            ),
-          ],
-        ),
-        body: RefreshIndicator(
-          onRefresh: () => fetchData(),
-          color: const Color(0xFFFFD700),
-          child: isLoading
-              ? const Center(child: CircularProgressIndicator(color: Color(0xFFFFD700)))
-              : errorMessage.isNotEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(errorMessage, style: const TextStyle(color: Colors.redAccent)),
-                          const SizedBox(height: 12),
-                          ElevatedButton(
-                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFD700)),
-                            onPressed: () => fetchData(),
-                            child: const Text('تلاش مجدد', style: TextStyle(color: Colors.black)),
-                          )
-                        ],
-                      ),
-                    )
-                  : ListView(
-                      padding: const EdgeInsets.all(16),
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text('📊 تابلوی نرخ‌های لحظه‌ای', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-                            Text(pricesData['updated_at']?.toString() ?? '', style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        _buildAssetGrid(assets),
-                        const SizedBox(height: 24),
-
-                        const Row(
-                          children: [
-                            Icon(Icons.auto_awesome_rounded, color: Color(0xFFFFD700), size: 20),
-                            SizedBox(width: 8),
-                            Text('پایش هوشمند اخبار موثر بر بازار', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Container(
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1E222D),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: TabBar(
-                            controller: _tabController,
-                            indicator: BoxDecoration(
-                              color: const Color(0xFF2962FF),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            labelColor: Colors.white,
-                            unselectedLabelColor: Colors.white60,
-                            labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                            tabs: const [
-                              Tab(text: 'امروز'),
-                              Tab(text: 'روز قبل'),
-                              Tab(text: '۲ روز قبل'),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-
-                        AnimatedBuilder(
-                          animation: _tabController,
-                          builder: (context, _) {
-                            if (_tabController.index == 0) {
-                              return _buildNewsList(todayList, "هنوز رویداد موثری برای امروز ثبت نشده است.");
-                            } else if (_tabController.index == 1) {
-                              return _buildNewsList(yesterdayList, "رویدادی برای روز قبل در آرشیو ثبت نشده است.");
-                            } else {
-                              return _buildNewsList(twoDaysAgoList, "رویدادی برای ۲ روز قبل در آرشیو ثبت نشده است.");
-                            }
-                          },
-                        ),
-                      ],
-                    ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAssetGrid(Map<String, dynamic> assets) {
-    if (assets.isEmpty) {
-      return const Center(child: Text('درحال بارگذاری نرخ‌ها...', style: TextStyle(color: Colors.grey)));
-    }
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-        childAspectRatio: 1.28,
-      ),
-      itemCount: assets.length,
-      itemBuilder: (ctx, idx) {
-        final key = assets.keys.toList()[idx];
-        final item = Map<String, dynamic>.from(assets[key]);
-        final accentColor = _getAssetColor(key);
-        final change = item['change']?.toString() ?? '۰.۰٪';
-        final isNegative = change.contains('-');
-
-        return InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: () => _showAssetSheet(key, item),
-          child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFF131922),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.white.withOpacity(0.08)),
-            ),
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(_getAssetIcon(key), color: accentColor, size: 18),
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: accentColor.withOpacity(0.18),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: accentColor.withOpacity(0.4)),
-                          ),
-                          child: Text(
-                            item['symbol']?.toString() ?? '',
-                            style: TextStyle(color: accentColor, fontSize: 10, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const Icon(Icons.open_in_new_rounded, size: 14, color: Colors.grey),
-                  ],
-                ),
-                Text(item['name']?.toString() ?? '', style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w500)),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          item['current_price']?.toString() ?? '---',
-                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
-                        ),
-                        Text(item['unit']?.toString() ?? '', style: const TextStyle(fontSize: 9, color: Colors.grey)),
-                      ],
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: (isNegative ? const Color(0xFFF23645) : const Color(0xFF00E676)).withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        change,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: isNegative ? const Color(0xFFF23645) : const Color(0xFF00E676),
-                        ),
-                      ),
-                    ),
-                  ],
-                )
               ],
             ),
           ),
@@ -596,7 +530,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             _infoRow('🧭 جهت حرکت:', direction),
             const SizedBox(height: 14),
 
-            // بخش جدید: نمایش چکیده و بدنه اصلی خبر
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(12),
@@ -651,6 +584,151 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         const SizedBox(width: 6),
         Text(value, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
       ],
+    );
+  }
+}
+
+class LiveTickerCard extends StatefulWidget {
+  final String assetKey;
+  final Map<String, dynamic> item;
+  final Map<String, dynamic>? prevItem;
+  final Color accentColor;
+  final IconData iconData;
+  final VoidCallback onTap;
+
+  const LiveTickerCard({
+    super.key,
+    required this.assetKey,
+    required this.item,
+    required this.prevItem,
+    required this.accentColor,
+    required this.iconData,
+    required this.onTap,
+  });
+
+  @override
+  State<LiveTickerCard> createState() => _LiveTickerCardState();
+}
+
+class _LiveTickerCardState extends State<LiveTickerCard> {
+  Color _flashBorderColor = Colors.white.withOpacity(0.08);
+  Timer? _resetTimer;
+
+  @override
+  void didUpdateWidget(covariant LiveTickerCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldRaw = oldWidget.item['raw_num'];
+    final newRaw = widget.item['raw_num'];
+
+    if (oldRaw != null && newRaw != null && oldRaw != newRaw) {
+      if (newRaw > oldRaw) {
+        _triggerFlash(const Color(0xFF00E676));
+      } else if (newRaw < oldRaw) {
+        _triggerFlash(const Color(0xFFF23645));
+      }
+    }
+  }
+
+  void _triggerFlash(Color color) {
+    setState(() {
+      _flashBorderColor = color;
+    });
+    _resetTimer?.cancel();
+    _resetTimer = Timer(const Duration(milliseconds: 900), () {
+      if (mounted) {
+        setState(() {
+          _flashBorderColor = Colors.white.withOpacity(0.08);
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _resetTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final item = widget.item;
+    final change = item['change']?.toString() ?? '۰.۰٪';
+    final isNegative = change.contains('-');
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: widget.onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 400),
+        decoration: BoxDecoration(
+          color: const Color(0xFF131922),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _flashBorderColor, width: _flashBorderColor != Colors.white.withOpacity(0.08) ? 1.8 : 1.0),
+        ),
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(widget.iconData, color: widget.accentColor, size: 18),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: widget.accentColor.withOpacity(0.18),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: widget.accentColor.withOpacity(0.4)),
+                      ),
+                      child: Text(
+                        item['symbol']?.toString() ?? '',
+                        style: TextStyle(color: widget.accentColor, fontSize: 10, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+                const Icon(Icons.open_in_new_rounded, size: 14, color: Colors.grey),
+              ],
+            ),
+            Text(item['name']?.toString() ?? '', style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w500)),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item['current_price']?.toString() ?? '---',
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+                    ),
+                    Text(item['unit']?.toString() ?? '', style: const TextStyle(fontSize: 9, color: Colors.grey)),
+                  ],
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: (isNegative ? const Color(0xFFF23645) : const Color(0xFF00E676)).withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    change,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: isNegative ? const Color(0xFFF23645) : const Color(0xFF00E676),
+                    ),
+                  ),
+                ),
+              ],
+            )
+          ],
+        ),
+      ),
     );
   }
 }
