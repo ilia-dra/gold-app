@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -51,7 +52,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     _tabController = TabController(length: 3, vsync: this);
     fetchData();
 
-    // همگام‌سازی زنده هر ۱۰ ثانیه بدون پرش صفحه
+    // همگام‌سازی زنده قیمت‌ها هر ۱۰ ثانیه یک‌بار در پس‌زمینه
     _liveAutoRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       fetchData(isSilent: true);
     });
@@ -90,9 +91,30 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     } catch (e) {
       if (!isSilent && mounted) {
         setState(() {
-          errorMessage = "خطا در برقراری ارتباط با سرور. لطفاً اتصال اینترنت را چک کنید.";
+          errorMessage = "خطا در دریافت اطلاعات زنده. اتصال اینترنت را بررسی کنید.";
           isLoading = false;
         });
+      }
+    }
+  }
+
+  Future<void> _openExternalChart(String urlString) async {
+    final uri = Uri.parse(urlString);
+    try {
+      final canLaunch = await canLaunchUrl(uri);
+      if (canLaunch) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        await launchUrl(uri, mode: LaunchMode.platformDefault);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطا در باز کردن چارت: $urlString', textDirection: TextDirection.rtl),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
       }
     }
   }
@@ -125,7 +147,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       case "dollar":
         return const Color(0xFF00E676);
       case "tether":
-        return const Color(0xFF26A69A); // رنگ فیروزه‌ای اختصاصی تتر
+        return const Color(0xFF26A69A); // فیروزه‌ای اختصاصی تتر
       case "ons_gold":
       case "geram18":
       case "mesghal":
@@ -217,7 +239,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('🔻 کمترین قیمت امروز', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                            const Text('🔻 کف روزانه (Low)', style: TextStyle(color: Colors.grey, fontSize: 11)),
                             const SizedBox(height: 2),
                             Text('${item['low']} ${item['unit']}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
                           ],
@@ -232,7 +254,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('🔺 بیشترین قیمت امروز', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                            const Text('🔺 سقف روزانه (High)', style: TextStyle(color: Colors.grey, fontSize: 11)),
                             const SizedBox(height: 2),
                             Text('${item['high']} ${item['unit']}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
                           ],
@@ -243,26 +265,24 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                 ),
                 const SizedBox(height: 20),
 
-                Container(
+                // دکمه باز کردن مستقیم و بدون خطای چارت در مرورگر
+                SizedBox(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: isTradingView ? const Color(0xFF2962FF).withOpacity(0.12) : const Color(0xFFFF9800).withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: isTradingView ? const Color(0xFF2962FF).withOpacity(0.3) : const Color(0xFFFF9800).withOpacity(0.3)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(isTradingView ? Icons.candlestick_chart_rounded : Icons.insights_rounded, 
-                           color: isTradingView ? const Color(0xFF2962FF) : const Color(0xFFFF9800)),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          isTradingView ? 'مرجع جهانی چارت: TradingView\n$chartUrl' : 'مرجع رسمی نرخ‌ها: TGJU\n$chartUrl',
-                          style: const TextStyle(color: Colors.white70, fontSize: 11, height: 1.4),
-                        ),
-                      ),
-                    ],
+                  height: 48,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: isTradingView ? const Color(0xFF2962FF) : const Color(0xFFFF9800),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _openExternalChart(chartUrl);
+                    },
+                    icon: Icon(isTradingView ? Icons.candlestick_chart_rounded : Icons.insights_rounded, color: Colors.white),
+                    label: Text(
+                      isTradingView ? 'مشاهده چارت تکنیکال در TradingView' : 'مشاهده چارت و تحلیل در TGJU',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
                   ),
                 ),
               ],
@@ -348,7 +368,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         _buildAssetGrid(assets),
                         const SizedBox(height: 24),
 
-                        // بخش هوشمند اخبار و تب‌های سه‌روزه
                         const Row(
                           children: [
                             Icon(Icons.auto_awesome_rounded, color: Color(0xFFFFD700), size: 20),
@@ -384,11 +403,11 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           animation: _tabController,
                           builder: (context, _) {
                             if (_tabController.index == 0) {
-                              return _buildNewsList(todayList, "هنوز تحلیلی برای امروز ثبت نشده است.");
+                              return _buildNewsList(todayList, "هنوز رویداد موثری برای امروز ثبت نشده است.");
                             } else if (_tabController.index == 1) {
-                              return _buildNewsList(yesterdayList, "تحلیلی برای روز قبل در آرشیو موجود نیست.");
+                              return _buildNewsList(yesterdayList, "رویدادی برای روز قبل در آرشیو ثبت نشده است.");
                             } else {
-                              return _buildNewsList(twoDaysAgoList, "تحلیلی برای ۲ روز قبل در آرشیو موجود نیست.");
+                              return _buildNewsList(twoDaysAgoList, "رویدادی برای ۲ روز قبل در آرشیو ثبت نشده است.");
                             }
                           },
                         ),
@@ -473,7 +492,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         Text(item['unit']?.toString() ?? '', style: const TextStyle(fontSize: 9, color: Colors.grey)),
                       ],
                     ),
-                    // نمایش درصد تغییرات روزانه با رنگ سبز و قرمز
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
@@ -526,6 +544,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     final importance = n['importance']?.toString() ?? '🟡 متوسط';
     final affected = n['affected']?.toString() ?? '#طلا #دلار #تتر';
     final direction = n['direction']?.toString() ?? '⚪️ نوسانی';
+    final newsSummary = n['news_summary']?.toString() ?? 'خلاصه رویداد در دست نیست.';
 
     return Container(
       decoration: BoxDecoration(
@@ -575,7 +594,34 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             _infoRow('⏰ زمان رویداد:', '${n['timing'] ?? ''} (${n['exact_time'] ?? ''})'),
             const SizedBox(height: 6),
             _infoRow('🧭 جهت حرکت:', direction),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
+
+            // بخش جدید: نمایش چکیده و بدنه اصلی خبر
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2962FF).withOpacity(0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFF2962FF).withOpacity(0.25)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.description_rounded, size: 16, color: Color(0xFF90CAF9)),
+                      SizedBox(width: 6),
+                      Text('📄 خلاصه متن و اصل رویداد:', style: TextStyle(color: Color(0xFF90CAF9), fontSize: 12, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(newsSummary, style: const TextStyle(fontSize: 13, height: 1.6, color: Colors.white70)),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 14),
             const Text('📝 تحلیل اثر اقتصادی:', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
             Text(n['economic_analysis'] ?? '---', style: const TextStyle(fontSize: 13, height: 1.7, color: Colors.white)),
