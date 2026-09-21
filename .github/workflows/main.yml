@@ -28,6 +28,7 @@ jobs:
           flutter create --org com.ilia.goldbot --project-name goldbot my_app
           cd my_app
           flutter pub add http
+          flutter pub add url_launcher
 
           # دسترسی اینترنت
           sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"\/>' android/app/src/main/AndroidManifest.xml
