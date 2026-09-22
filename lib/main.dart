@@ -48,7 +48,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   Timer? _liveAutoRefreshTimer;
   late TabController _tabController;
 
-  // وضعیت فیلتر و اخبار خوانده‌شده
   Set<String> readNewsTitles = {};
   bool showUnreadOnly = false;
 
@@ -126,7 +125,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     }
   }
 
-  // باز کردن بدون مانع و مستقیم چارت در مرورگر
   Future<void> _openExternalChart(String urlString) async {
     final uri = Uri.parse(urlString);
     try {
@@ -142,8 +140,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     switch (key) {
       case "dollar":
         return Icons.attach_money_rounded;
-      case "tether":
-        return Icons.currency_bitcoin_rounded;
       case "ons_gold":
         return Icons.monetization_on_rounded;
       case "geram18":
@@ -165,8 +161,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     switch (key) {
       case "dollar":
         return const Color(0xFF00E676);
-      case "tether":
-        return const Color(0xFF26A69A);
       case "ons_gold":
       case "geram18":
       case "mesghal":
@@ -256,7 +250,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         _buildAssetGrid(assets),
                         const SizedBox(height: 24),
 
-                        // سربرگ اخبار و کلید فیلتر هوشمند
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
@@ -550,7 +543,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   Widget _buildNewsCard(Map<String, dynamic> n, String timestamp, bool isRead, VoidCallback onExpanded) {
     final title = n['title']?.toString() ?? 'گزارش تحلیلی بازار';
     final importance = n['importance']?.toString() ?? '🟡 متوسط';
-    final affected = n['affected']?.toString() ?? '#طلا #دلار #تتر';
+    final affected = n['affected']?.toString() ?? '#طلا #دلار #سکه';
     final direction = n['direction']?.toString() ?? '⚪️ نوسانی';
     final newsSummary = n['news_summary']?.toString() ?? 'خلاصه رویداد در دست نیست.';
 
