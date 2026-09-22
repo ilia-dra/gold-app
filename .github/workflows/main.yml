@@ -29,13 +29,20 @@ jobs:
           cd my_app
           flutter pub add http
           flutter pub add url_launcher
+          flutter pub add shared_preferences
 
-          # دسترسی اینترنت در اندروید
+          # تنظیم دسترسی اینترنت و باز کردن مستقیم چارت در مرورگر اندروید
           sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>' android/app/src/main/AndroidManifest.xml
+          sed -i '/<\/manifest>/i \    <queries><intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent></queries>' android/app/src/main/AndroidManifest.xml
+
+          # کلید امضای ثابت برای امکان آپدیت مستقیم بدون حذف نسخه قبل
+          mkdir -p ~/.android
+          keytool -genkeypair -alias androiddebugkey -keypass android -keystore ~/.android/debug.keystore -storepass android -dname "CN=Android Debug,O=Android,C=US" -validity 10000 -keyalg RSA -keysize 2048
 
           cp ../lib/main.dart lib/main.dart
 
-          flutter build apk --release
+          # بیلد با افزایش خودکار شماره نسخه
+          flutter build apk --release --build-number=${{ github.run_number }} --build-name=1.0.${{ github.run_number }}
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
