@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 void main() {
@@ -48,16 +48,39 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   Timer? _liveAutoRefreshTimer;
   late TabController _tabController;
 
+  // وضعیت فیلتر و اخبار خوانده‌شده
+  Set<String> readNewsTitles = {};
+  bool showUnreadOnly = false;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _loadReadNews();
     fetchData();
 
-    // همگام‌سازی فوق سریع نرخ‌ها هر ۳ ثانیه یک‌بار
     _liveAutoRefreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       fetchData(isSilent: true);
     });
+  }
+
+  Future<void> _loadReadNews() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList('read_news_titles') ?? [];
+    if (mounted) {
+      setState(() {
+        readNewsTitles = list.toSet();
+      });
+    }
+  }
+
+  Future<void> _markNewsAsRead(String title) async {
+    if (title.isEmpty || readNewsTitles.contains(title)) return;
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      readNewsTitles.add(title);
+    });
+    await prefs.setStringList('read_news_titles', readNewsTitles.toList());
   }
 
   @override
@@ -103,21 +126,15 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     }
   }
 
+  // باز کردن بدون مانع و مستقیم چارت در مرورگر
   Future<void> _openExternalChart(String urlString) async {
     final uri = Uri.parse(urlString);
     try {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        await Clipboard.setData(ClipboardData(text: urlString));
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('لینک چارت کپی شد.', textDirection: TextDirection.rtl)),
-          );
-        }
-      }
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (e) {
-      await Clipboard.setData(ClipboardData(text: urlString));
+      try {
+        await launchUrl(uri, mode: LaunchMode.platformDefault);
+      } catch (_) {}
     }
   }
 
@@ -239,11 +256,54 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         _buildAssetGrid(assets),
                         const SizedBox(height: 24),
 
-                        const Row(
+                        // سربرگ اخبار و کلید فیلتر هوشمند
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Icon(Icons.auto_awesome_rounded, color: Color(0xFFFFD700), size: 20),
-                            SizedBox(width: 8),
-                            Text('پایش هوشمند اخبار موثر بر بازار', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                            const Row(
+                              children: [
+                                Icon(Icons.auto_awesome_rounded, color: Color(0xFFFFD700), size: 20),
+                                SizedBox(width: 8),
+                                Text('پایش هوشمند اخبار موثر', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                              ],
+                            ),
+                            InkWell(
+                              borderRadius: BorderRadius.circular(8),
+                              onTap: () {
+                                setState(() {
+                                  showUnreadOnly = !showUnreadOnly;
+                                });
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: showUnreadOnly ? const Color(0xFF00E676).withOpacity(0.2) : Colors.white.withOpacity(0.06),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: showUnreadOnly ? const Color(0xFF00E676) : Colors.white24,
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      showUnreadOnly ? Icons.mark_email_unread_rounded : Icons.filter_list_rounded,
+                                      size: 14,
+                                      color: showUnreadOnly ? const Color(0xFF00E676) : Colors.white70,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      showUnreadOnly ? 'فقط خوانده‌نشده' : 'همه اخبار',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                        color: showUnreadOnly ? const Color(0xFF00E676) : Colors.white70,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                         const SizedBox(height: 12),
@@ -274,11 +334,11 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           animation: _tabController,
                           builder: (context, _) {
                             if (_tabController.index == 0) {
-                              return _buildNewsList(todayList, "هنوز رویداد موثری برای امروز ثبت نشده است.");
+                              return _buildNewsList(todayList, "رویداد موثری برای نمایش وجود ندارد.");
                             } else if (_tabController.index == 1) {
-                              return _buildNewsList(yesterdayList, "رویدادی برای روز قبل در آرشیو ثبت نشده است.");
+                              return _buildNewsList(yesterdayList, "رویدادی برای روز قبل در آرشیو نیست.");
                             } else {
-                              return _buildNewsList(twoDaysAgoList, "رویدادی برای ۲ روز قبل در آرشیو ثبت نشده است.");
+                              return _buildNewsList(twoDaysAgoList, "رویدادی برای ۲ روز قبل در آرشیو نیست.");
                             }
                           },
                         ),
@@ -452,28 +512,42 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   }
 
   Widget _buildNewsList(List<dynamic> list, String emptyMessage) {
-    if (list.isEmpty) {
+    final filteredList = showUnreadOnly
+        ? list.where((item) {
+            final t = (item['structured']?['title'] ?? '').toString();
+            return !readNewsTitles.contains(t);
+          }).toList()
+        : list;
+
+    if (filteredList.isEmpty) {
       return Container(
         padding: const EdgeInsets.symmetric(vertical: 30),
         alignment: Alignment.center,
-        child: Text(emptyMessage, style: const TextStyle(color: Colors.grey, fontSize: 13)),
+        child: Text(
+          showUnreadOnly ? "همه اخبار این بخش را مطالعه کرده‌اید! 🎉" : emptyMessage,
+          style: const TextStyle(color: Colors.grey, fontSize: 13),
+        ),
       );
     }
+
     return ListView.separated(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: list.length,
+      itemCount: filteredList.length,
       separatorBuilder: (_, __) => const SizedBox(height: 12),
       itemBuilder: (ctx, idx) {
-        final item = list[idx];
+        final item = filteredList[idx];
         final structured = item['structured'] ?? {};
         final timeStr = item['timestamp']?.toString() ?? '';
-        return _buildNewsCard(structured, timeStr);
+        final title = (structured['title'] ?? '').toString();
+        final isRead = readNewsTitles.contains(title);
+
+        return _buildNewsCard(structured, timeStr, isRead, () => _markNewsAsRead(title));
       },
     );
   }
 
-  Widget _buildNewsCard(Map<String, dynamic> n, String timestamp) {
+  Widget _buildNewsCard(Map<String, dynamic> n, String timestamp, bool isRead, VoidCallback onExpanded) {
     final title = n['title']?.toString() ?? 'گزارش تحلیلی بازار';
     final importance = n['importance']?.toString() ?? '🟡 متوسط';
     final affected = n['affected']?.toString() ?? '#طلا #دلار #تتر';
@@ -484,18 +558,47 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       decoration: BoxDecoration(
         color: const Color(0xFF131922),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFFFD700).withOpacity(0.3)),
+        border: Border.all(
+          color: isRead ? Colors.white10 : const Color(0xFFFFD700).withOpacity(0.5),
+          width: isRead ? 1.0 : 1.4,
+        ),
       ),
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
+          onExpansionChanged: (isOpen) {
+            if (isOpen) onExpanded();
+          },
           tilePadding: const EdgeInsets.all(16),
           childrenPadding: const EdgeInsets.only(left: 16, right: 16, bottom: 16),
-          collapsedIconColor: const Color(0xFFFFD700),
+          collapsedIconColor: isRead ? Colors.white54 : const Color(0xFFFFD700),
           iconColor: const Color(0xFFFFD700),
-          title: Text(
-            title,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white, height: 1.4),
+          title: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (!isRead)
+                Container(
+                  margin: const EdgeInsets.only(left: 8, top: 2),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00E676).withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: const Color(0xFF00E676).withOpacity(0.6)),
+                  ),
+                  child: const Text('🟢 جدید', style: TextStyle(color: Color(0xFF00E676), fontSize: 9, fontWeight: FontWeight.bold)),
+                ),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: isRead ? FontWeight.normal : FontWeight.bold,
+                    color: isRead ? Colors.white70 : Colors.white,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ],
           ),
           subtitle: Padding(
             padding: const EdgeInsets.only(top: 8),
@@ -514,7 +617,11 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   child: Text(
                     affected,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 10, color: Color(0xFFFFD700), fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: isRead ? Colors.grey : const Color(0xFFFFD700),
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 Text(timestamp.split(' - ').last, style: const TextStyle(fontSize: 10, color: Colors.grey)),
