@@ -46,16 +46,23 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   Map<String, dynamic> news3DaysData = {};
   String errorMessage = "";
   Timer? _liveAutoRefreshTimer;
-  late TabController _tabController;
+  late TabController _dateTabController;
 
+  // تنظیمات شخصی‌سازی تابلو
+  List<String> selectedAssetKeys = [
+    'dollar', 'ons_gold', 'geram18', 'mesghal', 'sekeh', 'aed', 'eur', 'silver_gram'
+  ];
+
+  // تفکیک اخبار و خوانده‌شده‌ها
+  String currentNewsScope = "domestic"; // domestic | foreign
   Set<String> readNewsTitles = {};
   bool showUnreadOnly = false;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
-    _loadReadNews();
+    _dateTabController = TabController(length: 3, vsync: this);
+    _loadUserPreferences();
     fetchData();
 
     _liveAutoRefreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
@@ -63,14 +70,26 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     });
   }
 
-  Future<void> _loadReadNews() async {
+  Future<void> _loadUserPreferences() async {
     final prefs = await SharedPreferences.getInstance();
-    final list = prefs.getStringList('read_news_titles') ?? [];
+    final savedKeys = prefs.getStringList('user_selected_assets');
+    final readList = prefs.getStringList('read_news_titles') ?? [];
     if (mounted) {
       setState(() {
-        readNewsTitles = list.toSet();
+        if (savedKeys != null && savedKeys.isNotEmpty) {
+          selectedAssetKeys = savedKeys;
+        }
+        readNewsTitles = readList.toSet();
       });
     }
+  }
+
+  Future<void> _saveSelectedAssets(List<String> newKeys) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('user_selected_assets', newKeys);
+    setState(() {
+      selectedAssetKeys = newKeys;
+    });
   }
 
   Future<void> _markNewsAsRead(String title) async {
@@ -85,7 +104,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   @override
   void dispose() {
     _liveAutoRefreshTimer?.cancel();
-    _tabController.dispose();
+    _dateTabController.dispose();
     super.dispose();
   }
 
@@ -137,53 +156,43 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   }
 
   IconData _getAssetIcon(String key) {
-    switch (key) {
-      case "dollar":
-        return Icons.attach_money_rounded;
-      case "ons_gold":
-        return Icons.monetization_on_rounded;
-      case "geram18":
-        return Icons.auto_awesome_rounded;
-      case "mesghal":
-        return Icons.layers_rounded;
-      case "sekeh":
-        return Icons.album_rounded;
-      case "silver_gram":
-        return Icons.adjust_rounded;
-      case "ons_silver":
-        return Icons.brightness_medium_rounded;
-      default:
-        return Icons.show_chart_rounded;
-    }
+    if (key.contains("dollar") || key == "aud" || key == "cad") return Icons.attach_money_rounded;
+    if (key == "eur") return Icons.euro_rounded;
+    if (key == "gbp") return Icons.currency_pound_rounded;
+    if (key == "aed" || key == "try" || key == "cny" || key == "iqd" || key == "rub" || key == "chf") return Icons.payments_rounded;
+    if (key.contains("seke") || key == "nim" || key == "rob" || key == "gerami") return Icons.album_rounded;
+    if (key.contains("silver")) return Icons.adjust_rounded;
+    if (key == "oil_brent") return Icons.local_gas_station_rounded;
+    return Icons.auto_awesome_rounded;
   }
 
   Color _getAssetColor(String key) {
-    switch (key) {
-      case "dollar":
-        return const Color(0xFF00E676);
-      case "ons_gold":
-      case "geram18":
-      case "mesghal":
-        return const Color(0xFFFFD700);
-      case "sekeh":
-        return const Color(0xFFFFA000);
-      case "silver_gram":
-      case "ons_silver":
-        return const Color(0xFF90CAF9);
-      default:
-        return Colors.white;
-    }
+    if (key == "dollar") return const Color(0xFF00E676);
+    if (key == "aed" || key == "eur" || key == "gbp" || key == "cad" || key == "aud") return const Color(0xFF26A69A);
+    if (key.contains("gold") || key.contains("geram") || key == "mesghal") return const Color(0xFFFFD700);
+    if (key.contains("seke") || key == "nim" || key == "rob") return const Color(0xFFFFA000);
+    if (key.contains("silver")) return const Color(0xFF90CAF9);
+    if (key == "oil_brent") return const Color(0xFFFF5252);
+    return Colors.white;
   }
 
   @override
   Widget build(BuildContext context) {
-    final Map<String, dynamic> assets = pricesData['assets'] != null
+    final Map<String, dynamic> allAssets = pricesData['assets'] != null
         ? Map<String, dynamic>.from(pricesData['assets'])
         : {};
 
-    final List<dynamic> todayList = news3DaysData['today'] ?? [];
-    final List<dynamic> yesterdayList = news3DaysData['yesterday'] ?? [];
-    final List<dynamic> twoDaysAgoList = news3DaysData['two_days_ago'] ?? [];
+    final consensus = news3DaysData['consensus'] as Map<String, dynamic>?;
+
+    final List<dynamic> todayList = (news3DaysData['today'] ?? [])
+        .where((item) => item['scope'] == currentNewsScope)
+        .toList();
+    final List<dynamic> yesterdayList = (news3DaysData['yesterday'] ?? [])
+        .where((item) => item['scope'] == currentNewsScope)
+        .toList();
+    final List<dynamic> twoDaysAgoList = (news3DaysData['two_days_ago'] ?? [])
+        .where((item) => item['scope'] == currentNewsScope)
+        .toList();
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -239,25 +248,49 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   : ListView(
                       padding: const EdgeInsets.all(16),
                       children: [
+                        // هدر تابلو با دکمه شخصی‌سازی (مانند اپ چند)
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             const Text('📊 تابلوی نرخ‌های لحظه‌ای', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-                            Text(pricesData['updated_at']?.toString() ?? '', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                            InkWell(
+                              borderRadius: BorderRadius.circular(8),
+                              onTap: () => _showAssetCustomizationSheet(allAssets),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFFD700).withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: const Color(0xFFFFD700).withOpacity(0.4)),
+                                ),
+                                child: const Row(
+                                  children: [
+                                    Icon(Icons.tune_rounded, size: 14, color: Color(0xFFFFD700)),
+                                    SizedBox(width: 4),
+                                    Text('شخصی‌سازی تابلو', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFFFFD700))),
+                                  ],
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                         const SizedBox(height: 12),
-                        _buildAssetGrid(assets),
+                        _buildUserSelectedGrid(allAssets),
                         const SizedBox(height: 24),
 
+                        // کارت برآیند و چشم‌انداز هوشمند بازار (Market Consensus)
+                        if (consensus != null) _buildConsensusCard(consensus),
+                        const SizedBox(height: 24),
+
+                        // سوییچر اخبار داخلی / بازارهای جهانی
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Row(
+                            Row(
                               children: [
-                                Icon(Icons.auto_awesome_rounded, color: Color(0xFFFFD700), size: 20),
-                                SizedBox(width: 8),
-                                Text('پایش هوشمند اخبار موثر', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                                _buildScopeButton("🇮🇷 اخبار داخلی", "domestic"),
+                                const SizedBox(width: 8),
+                                _buildScopeButton("🌐 بازارهای جهانی", "foreign"),
                               ],
                             ),
                             InkWell(
@@ -268,45 +301,35 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                                 });
                               },
                               child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                                 decoration: BoxDecoration(
                                   color: showUnreadOnly ? const Color(0xFF00E676).withOpacity(0.2) : Colors.white.withOpacity(0.06),
                                   borderRadius: BorderRadius.circular(8),
                                   border: Border.all(
                                     color: showUnreadOnly ? const Color(0xFF00E676) : Colors.white24,
-                                    width: 1,
                                   ),
                                 ),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      showUnreadOnly ? Icons.mark_email_unread_rounded : Icons.filter_list_rounded,
-                                      size: 14,
-                                      color: showUnreadOnly ? const Color(0xFF00E676) : Colors.white70,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      showUnreadOnly ? 'فقط خوانده‌نشده' : 'همه اخبار',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.bold,
-                                        color: showUnreadOnly ? const Color(0xFF00E676) : Colors.white70,
-                                      ),
-                                    ),
-                                  ],
+                                child: Text(
+                                  showUnreadOnly ? 'فقط خوانده‌نشده' : 'همه اخبار',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: showUnreadOnly ? const Color(0xFF00E676) : Colors.white70,
+                                  ),
                                 ),
                               ),
                             ),
                           ],
                         ),
                         const SizedBox(height: 12),
+
                         Container(
                           decoration: BoxDecoration(
                             color: const Color(0xFF1E222D),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: TabBar(
-                            controller: _tabController,
+                            controller: _dateTabController,
                             indicator: BoxDecoration(
                               color: const Color(0xFF2962FF),
                               borderRadius: BorderRadius.circular(10),
@@ -324,11 +347,11 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         const SizedBox(height: 14),
 
                         AnimatedBuilder(
-                          animation: _tabController,
+                          animation: _dateTabController,
                           builder: (context, _) {
-                            if (_tabController.index == 0) {
-                              return _buildNewsList(todayList, "رویداد موثری برای نمایش وجود ندارد.");
-                            } else if (_tabController.index == 1) {
+                            if (_dateTabController.index == 0) {
+                              return _buildNewsList(todayList, "رویداد موثری در این بخش ثبت نشده است.");
+                            } else if (_dateTabController.index == 1) {
                               return _buildNewsList(yesterdayList, "رویدادی برای روز قبل در آرشیو نیست.");
                             } else {
                               return _buildNewsList(twoDaysAgoList, "رویدادی برای ۲ روز قبل در آرشیو نیست.");
@@ -342,10 +365,100 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     );
   }
 
-  Widget _buildAssetGrid(Map<String, dynamic> assets) {
-    if (assets.isEmpty) {
+  Widget _buildScopeButton(String title, String scopeKey) {
+    final isSelected = currentNewsScope == scopeKey;
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: () {
+        setState(() {
+          currentNewsScope = scopeKey;
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFFFFD700) : const Color(0xFF1E222D),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(
+          title,
+          style: TextStyle(
+            color: isSelected ? Colors.black : Colors.white70,
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // کارت برآیند بازار
+  Widget _buildConsensusCard(Map<String, dynamic> c) {
+    final sentiment = c['sentiment']?.toString() ?? '⚪️ نوسانی';
+    final headline = c['headline']?.toString() ?? 'برآیند شاخص‌های بازار';
+    final summary = c['summary']?.toString() ?? '';
+    final targets = c['targets'] as Map<String, dynamic>? ?? {};
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF131922),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFFD700), width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.psychology_rounded, color: Color(0xFFFFD700), size: 22),
+                  SizedBox(width: 8),
+                  Text('برآیند هوشمند و چشم‌انداز بازار', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFFFFD700))),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(sentiment, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(headline, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white)),
+          const SizedBox(height: 6),
+          Text(summary, style: const TextStyle(fontSize: 12, color: Colors.white70, height: 1.5)),
+          const Divider(color: Colors.white12, height: 18),
+          const Text('🎯 تارگت و دامنه‌های مورد انتظار:', style: TextStyle(fontSize: 11, color: Color(0xFFFFD700), fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: targets.entries.map((e) {
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(color: Colors.black38, borderRadius: BorderRadius.circular(8)),
+                child: Text('${e.key.toUpperCase()}: ${e.value}', style: const TextStyle(fontSize: 11, color: Colors.white)),
+              );
+            }).toList(),
+          )
+        ],
+      ),
+    );
+  }
+
+  // نمایش تابلوی نرخ‌های شخصی‌سازی شده توسط کاربر
+  Widget _buildUserSelectedGrid(Map<String, dynamic> allAssets) {
+    if (allAssets.isEmpty) {
       return const Center(child: Text('درحال اتصال به تابلوی زنده...', style: TextStyle(color: Colors.grey)));
     }
+
+    final displayedKeys = selectedAssetKeys.where((k) => allAssets.containsKey(k)).toList();
     final prevAssets = previousPrices['assets'] != null ? Map<String, dynamic>.from(previousPrices['assets']) : {};
 
     return GridView.builder(
@@ -357,10 +470,10 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         mainAxisSpacing: 10,
         childAspectRatio: 1.28,
       ),
-      itemCount: assets.length,
+      itemCount: displayedKeys.length,
       itemBuilder: (ctx, idx) {
-        final key = assets.keys.toList()[idx];
-        final item = Map<String, dynamic>.from(assets[key]);
+        final key = displayedKeys[idx];
+        final item = Map<String, dynamic>.from(allAssets[key]);
         final prevItem = prevAssets[key] != null ? Map<String, dynamic>.from(prevAssets[key]) : null;
 
         return LiveTickerCard(
@@ -375,20 +488,102 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     );
   }
 
+  // دیالوگ شخصی‌سازی و انتخاب دارایی‌ها (مانند اپلیکیشن چند)
+  void _showAssetCustomizationSheet(Map<String, dynamic> allAssets) {
+    List<String> tempKeys = List.from(selectedAssetKeys);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF131922),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Directionality(
+              textDirection: TextDirection.rtl,
+              child: Container(
+                height: MediaQuery.of(context).size.height * 0.8,
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(10))),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('شخصی‌سازی تابلوی قیمت‌ها', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                        Text('${tempKeys.length} دارایی فعال', style: const TextStyle(fontSize: 12, color: Color(0xFFFFD700))),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Text('دارایی‌های مورد نیاز خود را تیک بزنید تا در صفحه اول نمایش داده شوند:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: ListView(
+                        children: allAssets.keys.map((key) {
+                          final item = allAssets[key];
+                          final isSelected = tempKeys.contains(key);
+                          return CheckboxListTile(
+                            activeColor: const Color(0xFFFFD700),
+                            checkColor: Colors.black,
+                            secondary: Icon(_getAssetIcon(key), color: _getAssetColor(key)),
+                            title: Text(item['name']?.toString() ?? '', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                            subtitle: Text(item['symbol']?.toString() ?? '', style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                            value: isSelected,
+                            onChanged: (val) {
+                              setModalState(() {
+                                if (val == true) {
+                                  tempKeys.add(key);
+                                } else {
+                                  if (tempKeys.length > 1) tempKeys.remove(key);
+                                }
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFFFD700),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: () {
+                          _saveSelectedAssets(tempKeys);
+                          Navigator.pop(ctx);
+                        },
+                        child: const Text('ذخیره و اعمال در تابلو', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _showAssetSheet(String key, Map<String, dynamic> item) {
     final accentColor = _getAssetColor(key);
-    final linkType = item['link_type']?.toString() ?? 'tgju';
     final chartUrl = item['chart_url']?.toString() ?? 'https://www.tgju.org/';
-    final isTradingView = linkType == 'tradingview';
+    final isTradingView = item['link_type'] == 'tradingview';
     final change = item['change']?.toString() ?? '۰.۰٪';
     final isNegative = change.contains('-');
 
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF131922),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) {
         return Directionality(
           textDirection: TextDirection.rtl,
@@ -399,21 +594,14 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(10)),
-                  ),
+                  child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(10))),
                 ),
                 const SizedBox(height: 16),
                 Row(
                   children: [
                     Container(
                       padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: accentColor.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+                      decoration: BoxDecoration(color: accentColor.withOpacity(0.15), borderRadius: BorderRadius.circular(12)),
                       child: Icon(_getAssetIcon(key), color: accentColor, size: 28),
                     ),
                     const SizedBox(width: 12),
@@ -491,7 +679,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     },
                     icon: Icon(isTradingView ? Icons.candlestick_chart_rounded : Icons.insights_rounded, color: Colors.white),
                     label: Text(
-                      isTradingView ? 'مشاهده زنده چارت در TradingView' : 'مشاهده زنده چارت در TGJU',
+                      isTradingView ? 'مشاهده چارت در TradingView' : 'مشاهده چارت در TGJU',
                       style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                     ),
                   ),
@@ -599,10 +787,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
               children: [
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
+                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(6)),
                   child: Text(importance, style: const TextStyle(fontSize: 10, color: Colors.white70)),
                 ),
                 const SizedBox(width: 8),
@@ -610,11 +795,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   child: Text(
                     affected,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: isRead ? Colors.grey : const Color(0xFFFFD700),
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 10, color: isRead ? Colors.grey : const Color(0xFFFFD700), fontWeight: FontWeight.bold),
                   ),
                 ),
                 Text(timestamp.split(' - ').last, style: const TextStyle(fontSize: 10, color: Colors.grey)),
@@ -664,11 +845,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.black26,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.white10),
-              ),
+              decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white10)),
               child: Text(n['target'] ?? '---', style: const TextStyle(fontSize: 13, height: 1.6, color: Colors.white)),
             ),
           ],
